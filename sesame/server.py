@@ -17,6 +17,7 @@ from sesame.engine import (
     DeviceSession,
     PairingError,
     RouteRunner,
+    diagnose_wifi,
     has_pair_record,
     list_devices,
     pair_over_usb,
@@ -162,6 +163,11 @@ def create_app(on_idle: Callable[[], None] | None = None) -> FastAPI:
         await session.disconnect()
         await publish()
         return snapshot()
+
+    @app.get("/api/diagnose")
+    async def diagnose() -> dict:
+        """Why Wi-Fi discovery is finding nothing. Browses Bonjour, so it takes a moment."""
+        return await diagnose_wifi()
 
     @app.post("/api/pair")
     async def pair() -> dict:

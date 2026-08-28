@@ -50,6 +50,11 @@
   .bar { height: 4px; background: #10121a; border-radius: 2px; overflow: hidden; margin-top: 6px; }
   .bar > i { display: block; height: 100%; background: var(--accent); width: 0; }
   .hint { font-size: 11px; color: var(--muted); }
+  .diagnosis { display: none; font-size: 11px; line-height: 1.5; padding: 8px 10px;
+               border-radius: 6px; background: #3a2f22; border: 1px solid #5a4a2f;
+               color: #f0d9a8; }
+  .diagnosis ul { margin: 5px 0 0; padding-left: 16px; }
+  .diagnosis li { margin-top: 3px; }
   #toast { position: absolute; left: 336px; top: 12px; z-index: 900; max-width: 460px;
            padding: 8px 12px; border-radius: 8px; background: #3a2226; border: 1px solid #5a2f34;
            color: #ffb4b0; font-size: 12px; display: none; }
@@ -93,6 +98,7 @@
       <span class="pill"><span id="stateDot" class="dot"></span><span id="stateText">未連線</span></span>
     </div>
     <div class="meta" id="deviceMeta"></div>
+    <div class="diagnosis" id="diagnosis"></div>
     <div class="meta" id="statsMeta"></div>
   </section>
 
@@ -576,7 +582,27 @@ function fillDeviceSelect(devices) {
   if (previous) select.value = previous;
 }
 
+// Says which of the identical-looking Wi-Fi failures this one is. One of them
+// cannot be fixed by pairing again, so the wrong advice here wastes real time.
+async function showWifiDiagnosis() {
+  const panel = $('diagnosis');
+  panel.style.display = 'block';
+  panel.innerHTML = '<b>檢查中…</b>';
+  try {
+    const result = await (await fetch('/api/diagnose')).json();
+    if (result.ok) {
+      panel.innerHTML = '<b>WiFi 探索設定正常</b><br>裝置可能沒解鎖，或不在同一個網路。';
+      return;
+    }
+    const steps = result.actions.map((action) => `<li>${action}</li>`).join('');
+    panel.innerHTML = `<b>${result.reason}</b><ul>${steps}</ul>`;
+  } catch (error) {
+    panel.innerHTML = `<b>診斷失敗</b><br>${error.message}`;
+  }
+}
+
 async function refreshDevices({ attempt = 0 } = {}) {
+  $('diagnosis').style.display = 'none';
   const select = $('deviceSelect');
   stopScanning();
 
@@ -604,27 +630,22 @@ async function refreshDevices({ attempt = 0 } = {}) {
       : '<option value="">找不到裝置</option>';
   }
 
-  // Without a pairing record, Wi-Fi discovery has nothing to match the
-  // broadcast MAC against, so waiting will never help.
-  if (!canDiscoverOverWifi && attempt === 0) {
-    toast('WiFi 找不到裝置：還沒有配對記錄。插上 USB 跑一次 `sesame pair`，之後不用線也找得到。');
+  // Without a pairing record, Wi-Fi discovery has nothing to match against, so
+  // waiting will never help -- diagnose immediately instead of retrying.
+  if (!canDiscoverOverWifi) {
+    showWifiDiagnosis();
+    return;
   }
 
   if (keepLooking) {
-    if (attempt === 0 && canDiscoverOverWifi) {
+    if (attempt === 0) {
       toast('還在找裝置。剛啟動的 tunnel 要幾秒才會看到 WiFi 上的手機，手機也要解鎖。');
     }
     scanTimer = setTimeout(() => refreshDevices({ attempt: attempt + 1 }), SCAN_RETRY_MS);
     return;
   }
 
-  if (!canDiscoverOverWifi) {
-    toast('WiFi 探索需要配對記錄。插上 USB 跑一次 `sesame pair`。');
-    return;
-  }
-  toast(devices.length
-    ? '記得的裝置都不在線上。插上 USB，或確認手機跟電腦在同一個 WiFi 並已解鎖。'
-    : '找不到任何裝置。檢查 USB、「信任這台電腦」，以及開發者模式。');
+  showWifiDiagnosis();
 }
 
 $('refreshBtn').onclick = () => refreshDevices();

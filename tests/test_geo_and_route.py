@@ -315,3 +315,79 @@ async def test_advertised_wifi_macs_extracts_and_lowercases(monkeypatch):
         "0e:98:d2:bb:d3:15",
         "3e:a2:7c:3c:13:d4",
     }
+
+
+@pytest.mark.parametrize(
+    ("mac", "private"),
+    [
+        ("60:57:c8:92:6f:72", False),  # Apple hardware address
+        ("0e:98:d2:bb:d3:15", True),  # iOS Private Wi-Fi Address
+        ("3e:a2:7c:3c:13:d4", True),
+        ("not-a-mac", False),
+        ("", False),
+    ],
+)
+def test_is_private_mac(mac, private):
+    assert engine.is_private_mac(mac) is private
+
+
+async def test_diagnose_reports_a_missing_record(monkeypatch):
+    monkeypatch.setattr(engine, "stored_wifi_macs", dict)
+
+    async def advertising():
+        return {"0e:98:d2:bb:d3:15"}
+
+    monkeypatch.setattr(engine, "advertised_wifi_macs", lambda timeout=3.0: advertising())
+    result = await engine.diagnose_wifi()
+    assert result["ok"] is False
+    assert "配對" in result["actions"][0]
+
+
+async def test_diagnose_is_happy_when_a_record_matches(monkeypatch):
+    monkeypatch.setattr(engine, "stored_wifi_macs", lambda: {"0e:98:d2:bb:d3:15": "UDID-1"})
+
+    async def advertising():
+        return {"0e:98:d2:bb:d3:15", "3e:a2:7c:3c:13:d4"}
+
+    monkeypatch.setattr(engine, "advertised_wifi_macs", lambda timeout=3.0: advertising())
+    assert (await engine.diagnose_wifi())["ok"] is True
+
+
+async def test_diagnose_calls_out_private_addresses(monkeypatch):
+    # The record holds a hardware address, the air carries randomised ones:
+    # pairing again writes the same hardware address and changes nothing.
+    monkeypatch.setattr(engine, "stored_wifi_macs", lambda: {"60:57:c8:92:6f:72": "UDID-1"})
+
+    async def advertising():
+        return {"0e:98:d2:bb:d3:15", "3e:a2:7c:3c:13:d4"}
+
+    monkeypatch.setattr(engine, "advertised_wifi_macs", lambda timeout=3.0: advertising())
+    result = await engine.diagnose_wifi()
+    assert result["ok"] is False
+    assert "私人" in result["reason"]
+    assert any("重新配對沒有用" in action for action in result["actions"])
+
+
+async def test_diagnose_reports_an_empty_network(monkeypatch):
+    monkeypatch.setattr(engine, "stored_wifi_macs", lambda: {"60:57:c8:92:6f:72": "UDID-1"})
+
+    async def nothing():
+        return set()
+
+    monkeypatch.setattr(engine, "advertised_wifi_macs", lambda timeout=3.0: nothing())
+    result = await engine.diagnose_wifi()
+    assert result["ok"] is False
+    assert any("解鎖" in action for action in result["actions"])
+
+
+async def test_diagnose_suggests_repairing_a_rotated_address(monkeypatch):
+    # Both sides private: the phone rotated, and re-pairing does help.
+    monkeypatch.setattr(engine, "stored_wifi_macs", lambda: {"0e:11:22:33:44:55": "UDID-1"})
+
+    async def advertising():
+        return {"3e:a2:7c:3c:13:d4"}
+
+    monkeypatch.setattr(engine, "advertised_wifi_macs", lambda timeout=3.0: advertising())
+    result = await engine.diagnose_wifi()
+    assert result["ok"] is False
+    assert any("USB 配對" in action for action in result["actions"])

@@ -203,10 +203,17 @@ interface says so when that is the case rather than leaving you to guess.
 After pairing, the daemon picks the device up on the same Wi-Fi with no cable. A locked device may
 not be found; unlock it and rescan.
 
-**Pairing records go stale.** iOS broadcasts a *private* Wi-Fi address, and the record stores the
-one it saw at pairing time. If the phone rotates that address — rejoining the network, toggling
-Private Wi-Fi Address, forgetting and re-adding the network — the record stops matching and Wi-Fi
-goes quiet again, with exactly the same symptom as never having paired. Run `sesame pair` again.
+**Turn off Private Wi-Fi Address for the network.** This is the one that catches everyone. A
+pairing record stores the *hardware* Wi-Fi address the device reports over lockdown, but iOS
+broadcasts a *randomised* address on the network by default. The two can never match, so Wi-Fi
+discovery finds nothing however many times you pair — pairing writes the same hardware address
+back each time.
+
+On the phone: **Settings → Wi-Fi → ⓘ next to the network → Private Wi-Fi Address → off**, then
+rejoin the network.
+
+(If both addresses are randomised, the phone simply rotated its address since you paired, and
+pairing again does fix it.)
 
 ### Checking what's wrong
 
@@ -294,6 +301,7 @@ The interface is a client of this; you can drive it yourself.
 | GET | `/api/status` | Current session and route state |
 | POST | `/api/connect` | `{"udid": "..."}` |
 | POST | `/api/disconnect` | |
+| GET | `/api/diagnose` | Why Wi-Fi discovery is finding nothing; browses Bonjour, so it takes a moment |
 | POST | `/api/pair` | Write the pairing record Wi-Fi discovery needs, from a device on the cable |
 | POST | `/api/mount` | Mount the Developer Disk Image |
 | POST | `/api/location` | `{"lat": …, "lon": …}` — single point |

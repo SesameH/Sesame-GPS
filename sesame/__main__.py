@@ -216,7 +216,11 @@ def doctor() -> int:
     """
     import asyncio
 
-    from sesame.engine import advertised_wifi_macs, stored_wifi_macs
+    from sesame.engine import (
+        advertised_wifi_macs,
+        is_private_mac,
+        stored_wifi_macs,
+    )
 
     problems = 0
 
@@ -244,10 +248,19 @@ def doctor() -> int:
         print(f"✓ 配對記錄對得上正在廣播的裝置（{matched}）")
     elif advertised:
         problems += 1
-        print("✗ 配對記錄跟正在廣播的位址對不上 —— 手機換過私人 WiFi 位址了")
+        print("✗ 配對記錄跟正在廣播的位址對不上")
         print(f"  記錄裡：{', '.join(sorted(stored))}")
         print(f"  廣播中：{', '.join(sorted(advertised))}")
-        print("  插上 USB 重新配對一次：sesame pair")
+        real_in_record = any(not is_private_mac(mac) for mac in stored)
+        all_advertised_private = all(is_private_mac(mac) for mac in advertised)
+        if real_in_record and all_advertised_private:
+            # Re-pairing cannot fix this: it would store the hardware address
+            # again, which is not what the device puts on the air.
+            print("  記錄存的是真實硬體位址，廣播的全是私人位址 —— 重新配對沒有用。")
+            print("  請在手機上關掉這個網路的私人位址：")
+            print("  設定 → Wi-Fi → 網路旁的 ⓘ → 私人 Wi-Fi 位址 → 關閉，然後重新連線")
+        else:
+            print("  手機換過位址了。插上 USB 重新配對一次：sesame pair")
     else:
         print("· 這個網路上沒有裝置在廣播。手機解鎖了嗎？跟這台在同一個 WiFi 嗎？")
 

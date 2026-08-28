@@ -214,6 +214,21 @@ def stored_wifi_macs() -> dict[str, str]:
     return macs
 
 
+def is_private_mac(mac: str) -> bool:
+    """Whether a MAC is locally administered, i.e. randomised rather than real.
+
+    iOS calls this a "Private Wi-Fi Address". The distinction matters because a
+    pairing record stores the *hardware* address the device reports over
+    lockdown, while Bonjour carries whatever address it is currently using --
+    so with the feature on, the two can never match.
+    """
+    try:
+        first = int(mac.split(":")[0], 16)
+    except (ValueError, IndexError):
+        return False
+    return bool(first & 0b10)
+
+
 async def advertised_wifi_macs(timeout: float = 3.0) -> set[str]:
     """Wi-Fi MACs currently broadcasting the mobdev2 service on this network."""
     from pymobiledevice3.bonjour import browse_mobdev2
@@ -223,6 +238,61 @@ async def advertised_wifi_macs(timeout: float = 3.0) -> set[str]:
         if "@" in answer.instance:
             found.add(answer.instance.split("@", 1)[0].lower())
     return found
+
+
+async def diagnose_wifi() -> dict:
+    """Why Wi-Fi discovery can or cannot find anything right now.
+
+    Every one of these states looks identical from the outside -- an empty
+    device list -- and one of them cannot be fixed by pairing again, so saying
+    which is the whole point.
+    """
+    stored = stored_wifi_macs()
+    advertised = await advertised_wifi_macs(4.0)
+    detail = {
+        "storedMacs": sorted(stored),
+        "advertisedMacs": sorted(advertised),
+    }
+
+    if not stored:
+        return {
+            **detail,
+            "ok": False,
+            "reason": "沒有配對記錄，WiFi 一定找不到裝置。",
+            "actions": ["插上 USB 線，按「USB 配對」。"],
+        }
+
+    if stored.keys() & advertised:
+        return {**detail, "ok": True, "reason": None, "actions": []}
+
+    if not advertised:
+        return {
+            **detail,
+            "ok": False,
+            "reason": "這個網路上沒有裝置在廣播。",
+            "actions": [
+                "解鎖手機。",
+                "確認手機跟這台電腦連在同一個 WiFi。",
+            ],
+        }
+
+    if any(not is_private_mac(mac) for mac in stored) and all(is_private_mac(mac) for mac in advertised):
+        return {
+            **detail,
+            "ok": False,
+            "reason": "配對記錄存的是真實硬體位址，但手機廣播的是私人位址，永遠對不上。",
+            "actions": [
+                "重新配對沒有用 —— 寫進去的還是同一個真實位址。",
+                "手機上：設定 → WiFi → 網路旁的 ⓘ → 私人 WiFi 位址 → 關閉，再重新連線。",
+            ],
+        }
+
+    return {
+        **detail,
+        "ok": False,
+        "reason": "配對記錄跟正在廣播的位址對不上，手機換過位址了。",
+        "actions": ["插上 USB 線，按「USB 配對」重新寫一次記錄。"],
+    }
 
 
 class PairingError(RuntimeError):
