@@ -317,6 +317,19 @@ async def test_advertised_wifi_macs_extracts_and_lowercases(monkeypatch):
     }
 
 
+@pytest.fixture
+def offline_network(monkeypatch):
+    """Keep diagnose tests off the real network; each one overrides what it needs."""
+
+    async def nothing():
+        return set()
+
+    monkeypatch.setattr(engine, "advertised_wifi_macs", lambda timeout=3.0: nothing())
+    monkeypatch.setattr(engine, "discoverable_udids", lambda timeout=4.0: nothing())
+    monkeypatch.setattr(engine, "tunneld_tunnel_count", lambda: 1)
+    return monkeypatch
+
+
 @pytest.mark.parametrize(
     ("mac", "private"),
     [
@@ -331,63 +344,118 @@ def test_is_private_mac(mac, private):
     assert engine.is_private_mac(mac) is private
 
 
-async def test_diagnose_reports_a_missing_record(monkeypatch):
-    monkeypatch.setattr(engine, "stored_wifi_macs", dict)
+async def test_diagnose_reports_a_missing_record(offline_network):
+    offline_network.setattr(engine, "stored_wifi_macs", dict)
 
     async def advertising():
         return {"0e:98:d2:bb:d3:15"}
 
-    monkeypatch.setattr(engine, "advertised_wifi_macs", lambda timeout=3.0: advertising())
+    offline_network.setattr(engine, "advertised_wifi_macs", lambda timeout=3.0: advertising())
     result = await engine.diagnose_wifi()
     assert result["ok"] is False
     assert "配對" in result["actions"][0]
 
 
-async def test_diagnose_is_happy_when_a_record_matches(monkeypatch):
-    monkeypatch.setattr(engine, "stored_wifi_macs", lambda: {"0e:98:d2:bb:d3:15": "UDID-1"})
+async def test_diagnose_is_happy_when_a_record_matches(offline_network):
+    offline_network.setattr(engine, "stored_wifi_macs", lambda: {"0e:98:d2:bb:d3:15": "UDID-1"})
 
     async def advertising():
         return {"0e:98:d2:bb:d3:15", "3e:a2:7c:3c:13:d4"}
 
-    monkeypatch.setattr(engine, "advertised_wifi_macs", lambda timeout=3.0: advertising())
+    offline_network.setattr(engine, "advertised_wifi_macs", lambda timeout=3.0: advertising())
     assert (await engine.diagnose_wifi())["ok"] is True
 
 
-async def test_diagnose_calls_out_private_addresses(monkeypatch):
+async def test_diagnose_calls_out_private_addresses(offline_network):
     # The record holds a hardware address, the air carries randomised ones:
     # pairing again writes the same hardware address and changes nothing.
-    monkeypatch.setattr(engine, "stored_wifi_macs", lambda: {"60:57:c8:92:6f:72": "UDID-1"})
+    offline_network.setattr(engine, "stored_wifi_macs", lambda: {"60:57:c8:92:6f:72": "UDID-1"})
 
     async def advertising():
         return {"0e:98:d2:bb:d3:15", "3e:a2:7c:3c:13:d4"}
 
-    monkeypatch.setattr(engine, "advertised_wifi_macs", lambda timeout=3.0: advertising())
+    offline_network.setattr(engine, "advertised_wifi_macs", lambda timeout=3.0: advertising())
     result = await engine.diagnose_wifi()
     assert result["ok"] is False
     assert "私人" in result["reason"]
     assert any("重新配對沒有用" in action for action in result["actions"])
 
 
-async def test_diagnose_reports_an_empty_network(monkeypatch):
-    monkeypatch.setattr(engine, "stored_wifi_macs", lambda: {"60:57:c8:92:6f:72": "UDID-1"})
+async def test_diagnose_reports_an_empty_network(offline_network):
+    offline_network.setattr(engine, "stored_wifi_macs", lambda: {"60:57:c8:92:6f:72": "UDID-1"})
 
     async def nothing():
         return set()
 
-    monkeypatch.setattr(engine, "advertised_wifi_macs", lambda timeout=3.0: nothing())
+    offline_network.setattr(engine, "advertised_wifi_macs", lambda timeout=3.0: nothing())
     result = await engine.diagnose_wifi()
     assert result["ok"] is False
     assert any("解鎖" in action for action in result["actions"])
 
 
-async def test_diagnose_suggests_repairing_a_rotated_address(monkeypatch):
+async def test_diagnose_suggests_repairing_a_rotated_address(offline_network):
     # Both sides private: the phone rotated, and re-pairing does help.
-    monkeypatch.setattr(engine, "stored_wifi_macs", lambda: {"0e:11:22:33:44:55": "UDID-1"})
+    offline_network.setattr(engine, "stored_wifi_macs", lambda: {"0e:11:22:33:44:55": "UDID-1"})
 
     async def advertising():
         return {"3e:a2:7c:3c:13:d4"}
 
-    monkeypatch.setattr(engine, "advertised_wifi_macs", lambda timeout=3.0: advertising())
+    offline_network.setattr(engine, "advertised_wifi_macs", lambda timeout=3.0: advertising())
     result = await engine.diagnose_wifi()
     assert result["ok"] is False
     assert any("USB 配對" in action for action in result["actions"])
+
+
+async def test_diagnose_blames_a_stuck_daemon_before_anything_else(offline_network):
+    # A device is plainly reachable yet the daemon holds nothing: no amount of
+    # pairing advice helps, and it must outrank the MAC checks.
+    offline_network.setattr(engine, "stored_wifi_macs", dict)
+
+    async def advertising():
+        return set()
+
+    async def reachable():
+        return {"UDID-1"}
+
+    offline_network.setattr(engine, "advertised_wifi_macs", lambda timeout=3.0: advertising())
+    offline_network.setattr(engine, "discoverable_udids", lambda timeout=4.0: reachable())
+    offline_network.setattr(engine, "tunneld_tunnel_count", lambda: 0)
+
+    result = await engine.diagnose_wifi()
+    assert result["ok"] is False
+    assert "卡住" in result["reason"]
+    assert any("daemon restart" in action for action in result["actions"])
+
+
+async def test_diagnose_does_not_blame_the_daemon_when_it_holds_tunnels(offline_network):
+    offline_network.setattr(engine, "stored_wifi_macs", dict)
+
+    async def advertising():
+        return set()
+
+    async def reachable():
+        return {"UDID-1"}
+
+    offline_network.setattr(engine, "advertised_wifi_macs", lambda timeout=3.0: advertising())
+    offline_network.setattr(engine, "discoverable_udids", lambda timeout=4.0: reachable())
+    offline_network.setattr(engine, "tunneld_tunnel_count", lambda: 1)
+
+    assert "卡住" not in ((await engine.diagnose_wifi())["reason"] or "")
+
+
+def test_tunneld_tunnel_count_is_none_when_unreachable(monkeypatch):
+    import pymobiledevice3.tunneld.api as api
+
+    def unreachable():
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(api, "_list_tunnels", unreachable)
+    assert engine.tunneld_tunnel_count() is None
+
+
+def test_tunneld_tunnel_count_sums_every_interface(monkeypatch):
+    import pymobiledevice3.tunneld.api as api
+
+    # One device advertised on two interfaces still counts as two tunnels.
+    monkeypatch.setattr(api, "_list_tunnels", lambda: {"UDID-1": [{}, {}], "UDID-2": [{}]})
+    assert engine.tunneld_tunnel_count() == 3

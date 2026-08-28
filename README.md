@@ -215,6 +215,14 @@ rejoin the network.
 (If both addresses are randomised, the phone simply rotated its address since you paired, and
 pairing again does fix it.)
 
+**The tunnel daemon can get stuck.** It tries each address it discovers once and keeps the failed
+attempt in its table, so it stops retrying that address for the life of the process. After a long
+run it can hold no tunnels at all while the device is plainly reachable. Restart it:
+
+```bash
+sudo sesame daemon restart
+```
+
 ### Checking what's wrong
 
 ```bash

@@ -184,6 +184,41 @@ def daemon_start() -> int:
     return subprocess.run([executable, "remote", "tunneld"], check=False).returncode
 
 
+def daemon_restart() -> int:
+    """Stop any running tunnel daemon and start a fresh one.
+
+    tunneld tries each discovered address once and keeps the failed attempt in
+    its table, so it stops retrying that address for the life of the process.
+    A long-running daemon can end up holding no tunnels at all while devices
+    are plainly reachable; restarting is the only way out.
+    """
+    if os.geteuid() != 0:
+        print(f"要 root。請跑：sudo {sys.argv[0]} daemon restart", file=sys.stderr)
+        return 1
+
+    subprocess.run(["pkill", "-f", "remote tunneld"], check=False, capture_output=True)
+    for _ in range(20):
+        if not tunneld_is_up():
+            break
+        time.sleep(0.25)
+
+    executable = pymobiledevice3_path()
+    if executable is None:
+        print("找不到 pymobiledevice3 執行檔。", file=sys.stderr)
+        return 1
+
+    subprocess.run([executable, "remote", "tunneld", "--daemonize"], check=False)
+    deadline = time.monotonic() + TUNNELD_STARTUP_TIMEOUT
+    while time.monotonic() < deadline:
+        if tunneld_is_up():
+            print("tunneld 重啟完成。", flush=True)
+            return 0
+        time.sleep(0.5)
+
+    print("tunneld 重啟後沒有回應。", file=sys.stderr)
+    return 1
+
+
 def daemon_uninstall() -> int:
     if os.geteuid() != 0:
         print(f"要 root。請跑：sudo {sys.argv[0]} daemon uninstall", file=sys.stderr)
@@ -218,8 +253,10 @@ def doctor() -> int:
 
     from sesame.engine import (
         advertised_wifi_macs,
+        discoverable_udids,
         is_private_mac,
         stored_wifi_macs,
+        tunneld_tunnel_count,
     )
 
     problems = 0
@@ -236,8 +273,17 @@ def doctor() -> int:
         print("· LaunchDaemon 未安裝：Mac 每次重開機都要重新授權一次")
         print("  裝起來就不用再輸密碼：sudo sesame daemon install")
 
+    tunnels = tunneld_tunnel_count()
+    if tunnels is not None:
+        print(f"· tunneld 目前持有 {tunnels} 個 tunnel")
+
     stored = stored_wifi_macs()
     advertised = asyncio.run(advertised_wifi_macs(4.0))
+    reachable = asyncio.run(discoverable_udids())
+    if reachable and tunnels == 0:
+        problems += 1
+        print(f"✗ 網路上找得到裝置（{', '.join(sorted(reachable))}）但 tunneld 一個 tunnel 都沒有")
+        print("  它卡住了。重啟：sudo sesame daemon restart")
 
     if not stored:
         problems += 1
@@ -682,6 +728,7 @@ def main() -> None:
         raise SystemExit(
             {
                 "start": daemon_start,
+                "restart": daemon_restart,
                 "install": daemon_install,
                 "uninstall": daemon_uninstall,
                 "status": daemon_status,

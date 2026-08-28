@@ -240,6 +240,37 @@ async def advertised_wifi_macs(timeout: float = 3.0) -> set[str]:
     return found
 
 
+def tunneld_tunnel_count() -> int | None:
+    """How many tunnels the daemon currently holds, or None if it is unreachable."""
+    from pymobiledevice3.tunneld.api import _list_tunnels
+
+    try:
+        return sum(len(entries) for entries in _list_tunnels().values())
+    except Exception:
+        return None
+
+
+async def discoverable_udids(timeout: float = 4.0) -> set[str]:
+    """Devices reachable on this network, independent of the tunnel daemon.
+
+    Used to tell "nothing is there" apart from "the daemon is not picking up
+    what is plainly there", which look identical in the device list.
+    """
+    from pymobiledevice3.remote.tunnel_service import get_remote_pairing_tunnel_services
+
+    found: set[str] = set()
+    try:
+        services = await asyncio.wait_for(get_remote_pairing_tunnel_services(), timeout + 20)
+    except Exception:
+        return found
+    for service in services:
+        with contextlib.suppress(Exception):
+            found.add(service.remote_identifier)
+        with contextlib.suppress(Exception):
+            await service.close()
+    return found
+
+
 async def diagnose_wifi() -> dict:
     """Why Wi-Fi discovery can or cannot find anything right now.
 
@@ -249,10 +280,25 @@ async def diagnose_wifi() -> dict:
     """
     stored = stored_wifi_macs()
     advertised = await advertised_wifi_macs(4.0)
+    reachable = await discoverable_udids()
+    tunnels = tunneld_tunnel_count()
     detail = {
         "storedMacs": sorted(stored),
         "advertisedMacs": sorted(advertised),
+        "reachableUdids": sorted(reachable),
+        "tunnelCount": tunnels,
     }
+
+    if reachable and tunnels == 0:
+        return {
+            **detail,
+            "ok": False,
+            "reason": "裝置在網路上找得到，但 tunneld 一個 tunnel 都沒建立 —— 它卡住了。",
+            "actions": [
+                "重啟 tunnel daemon：sudo sesame daemon restart",
+                "tunneld 對每個位址只嘗試一次，失敗後不會重試，長時間執行後就會這樣。",
+            ],
+        }
 
     if not stored:
         return {
