@@ -137,3 +137,31 @@ def test_index_is_always_revalidated():
     # An upgraded interface must not sit behind a heuristically cached copy.
     assert response.headers["cache-control"] == "no-cache"
     assert response.headers["etag"]
+
+
+def test_shutdown_hands_gps_back_to_the_device(device):
+    """Closing the app must not leave the device stuck on a fake location."""
+    app = create_app()
+    with TestClient(app) as client:
+        client.post("/api/connect", json={"udid": "UDID-1"})
+        client.post("/api/location", json={"lat": 25.03, "lon": 121.56})
+        assert client.get("/api/status").json()["session"]["state"] == "connected"
+    # Leaving the context runs the lifespan shutdown.
+    assert device.simulation.exited
+    assert device.rsd.closed == 1
+
+
+def test_shutdown_stops_a_running_route(device):
+    app = create_app()
+    with TestClient(app) as client:
+        client.post("/api/connect", json={"udid": "UDID-1"})
+        client.post(
+            "/api/route/start",
+            json={"points": [[25.0330, 121.5654], [25.0430, 121.5654]], "speed_kmh": 5.0},
+        )
+        assert client.get("/api/status").json()["route"]["running"] is True
+
+    written = len(device.simulation.writes)
+    # Nothing may keep moving after the server is gone.
+    assert device.simulation.exited
+    assert len(device.simulation.writes) == written

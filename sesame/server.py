@@ -17,6 +17,7 @@ from sesame.engine import (
     DeviceSession,
     PairingError,
     RouteRunner,
+    State,
     diagnose_wifi,
     has_pair_record,
     list_devices,
@@ -96,6 +97,10 @@ def create_app(on_idle: Callable[[], None] | None = None) -> FastAPI:
     idle_timer: asyncio.Task | None = None
 
     async def publish() -> None:
+        # A session that has given up cannot move anything, so a route left
+        # running would keep reporting progress that reaches no device.
+        if session.status.state is State.ERROR and route.status.running:
+            await route.stop()
         await broadcaster.send(snapshot())
 
     session = DeviceSession(on_change=publish)

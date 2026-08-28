@@ -456,6 +456,11 @@ class DeviceSession:
         async with self._lock:
             await self._teardown()
             self._closing = False
+            # A coordinate left over from an earlier session must not be the
+            # first thing a freshly connected device is told.
+            self._pending = None
+            self._pending_heading = 0.0
+            self._wakeup.clear()
             self.status = SessionStatus(state=State.CONNECTING, udid=udid)
             await self._notify()
             try:
@@ -606,8 +611,20 @@ class DeviceSession:
         return False
 
     async def _notify(self) -> None:
-        if self._on_change is not None:
+        """Tell the interface something changed.
+
+        Failures are swallowed: a listener that throws must not take the writer
+        task down with it, which would leave a session that looks connected but
+        never sends another coordinate.
+        """
+        if self._on_change is None:
+            return
+        try:
             await self._on_change()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("status listener failed")
 
 
 @dataclass
@@ -711,6 +728,18 @@ class RouteRunner:
             self.status.distance_m = max(0.0, min(1.0, fraction)) * self._path.length
 
     async def _run(self) -> None:
+        try:
+            await self._traverse()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Anything unexpected would otherwise leave the interface showing a
+            # route that is still advancing while nothing moves.
+            logger.exception("route stopped unexpectedly")
+            self.status.running = False
+            raise
+
+    async def _traverse(self) -> None:
         assert self._path is not None
         path = self._path
         previous = time.monotonic()

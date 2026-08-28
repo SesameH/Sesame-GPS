@@ -372,9 +372,22 @@ uv run ruff check .
 uv run pytest
 ```
 
-No device required. Route tests drive a fake session that records what would have been written,
-and check realised ground speed, that pausing doesn't accumulate distance, mid-run speed changes,
-loop wrapping, and end-of-route behaviour.
+No device required — a fake device stack stands in for pymobiledevice3, so the session, route and
+HTTP layers are all exercised end to end.
+
+```bash
+uv run pytest --cov=sesame --cov-report=term-missing
+```
+
+What the suite pins down:
+
+| Area | Covers |
+| --- | --- |
+| Geometry | Constant speed across uneven vertices, antimeridian crossing, antipodes, coincident points, single-point paths |
+| Session | One channel reused across many updates, newest-coordinate-wins coalescing, write throttling, reconnect with replay, giving up cleanly, no stale coordinate carried to the next device |
+| Routes | Realised ground speed, pause not accumulating distance, mid-run speed changes, seeking, loop wrapping, bounded jitter, a dead route not claiming to run |
+| HTTP | Every endpoint including error codes, WebSocket updates, idle shutdown, a lost session stopping the route, shutdown handing GPS back |
+| CLI | Every command reaching its handler, the daemon actions, doctor's five findings, pairing, the `.app` builder |
 
 ## Troubleshooting
 
