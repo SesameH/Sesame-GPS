@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path as FilePath
 
@@ -31,6 +32,10 @@ class Broadcaster:
 
     def remove(self, websocket: WebSocket) -> None:
         self._clients.discard(websocket)
+
+    @property
+    def empty(self) -> bool:
+        return not self._clients
 
     async def send(self, payload: dict) -> None:
         dead: list[WebSocket] = []
@@ -67,8 +72,20 @@ class SeekBody(BaseModel):
     fraction: float = Field(ge=0, le=1)
 
 
-def create_app() -> FastAPI:
+# A browser reload drops the socket and reconnects a moment later, so idleness
+# has to be given time to prove itself before it counts as "the tab is closed".
+IDLE_GRACE_SECONDS = 20.0
+
+
+def create_app(on_idle: Callable[[], None] | None = None) -> FastAPI:
+    """Build the application.
+
+    :param on_idle: called once the last browser has been gone for
+        :data:`IDLE_GRACE_SECONDS`. Used to shut the server down when the app
+        was launched for a window the user has since closed.
+    """
     broadcaster = Broadcaster()
+    idle_timer: asyncio.Task | None = None
 
     async def publish() -> None:
         await broadcaster.send(snapshot())
@@ -209,6 +226,10 @@ def create_app() -> FastAPI:
     @app.websocket("/ws")
     async def websocket(connection: WebSocket) -> None:
         await connection.accept()
+        nonlocal idle_timer
+        if idle_timer is not None:
+            idle_timer.cancel()
+            idle_timer = None
         broadcaster.add(connection)
         try:
             await connection.send_json(snapshot())
@@ -221,6 +242,22 @@ def create_app() -> FastAPI:
             logger.debug("websocket closed: %r", error)
         finally:
             broadcaster.remove(connection)
+            start_idle_countdown()
+
+    def start_idle_countdown() -> None:
+        nonlocal idle_timer
+        if on_idle is None or not broadcaster.empty:
+            return
+        if idle_timer is not None:
+            idle_timer.cancel()
+        idle_timer = asyncio.create_task(_idle_countdown(), name="sesame-idle")
+
+    async def _idle_countdown() -> None:
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.sleep(IDLE_GRACE_SECONDS)
+            if broadcaster.empty:
+                logger.info("no browser for %.0fs, shutting down", IDLE_GRACE_SECONDS)
+                on_idle()
 
     def _require_connected() -> None:
         if session.status.udid is None:

@@ -211,8 +211,13 @@ Launch it from Launchpad or Finder. With no terminal to prompt on, it asks for y
 through the native macOS authorisation dialog. Startup output goes to `~/Library/Logs/sesame.log`.
 
 If an instance is already running it won't start a second one — it just points your browser at the
-running one. If the port is taken by something else you get a dialog, not a silent death in a log
-file.
+running one. If the port is taken by something else you get a dialog naming what holds it, not a
+silent death in a log file.
+
+**Closing the tab quits the app.** Twenty seconds after the last browser disconnects the server
+shuts down, which also hands GPS back to the device — a reload or a moment on another tab is not
+long enough to trigger it. Running `sesame` from a terminal does not do this; pass
+`--quit-on-close` if you want it there too.
 
 The `.app` is a **launcher, not a frozen bundle**: it points at the `sesame` executable of
 whichever environment you built it from, so re-run `app build` if that moves. This keeps the build
@@ -304,6 +309,11 @@ uv run sesame --open
 ```
 
 Every command in this document works the same way with `uv run` in front of it.
+
+```bash
+uv run pytest        # no device needed
+uv run ruff check .
+```
 
 ## Tests
 
