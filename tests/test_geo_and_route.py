@@ -270,3 +270,52 @@ def test_has_pair_record_survives_an_unreadable_folder(monkeypatch):
 
     monkeypatch.setattr(engine, "pair_record_folder", boom)
     assert engine.has_pair_record() is False
+
+
+def test_stored_wifi_macs_reads_only_usable_records(tmp_path, monkeypatch):
+    import plistlib
+
+    monkeypatch.setattr(engine, "pair_record_folder", lambda: tmp_path)
+
+    (tmp_path / "UDID-1.plist").write_bytes(
+        plistlib.dumps({"WiFiMACAddress": "0E:98:D2:BB:D3:15"})
+    )
+    # RemotePairing records are skipped, and a record with no MAC is useless
+    # for matching a Bonjour advertisement.
+    (tmp_path / "remote_UDID-2.plist").write_bytes(
+        plistlib.dumps({"WiFiMACAddress": "3e:a2:7c:3c:13:d4"})
+    )
+    (tmp_path / "UDID-3.plist").write_bytes(plistlib.dumps({"HostID": "x"}))
+    (tmp_path / "UDID-4.plist").write_bytes(b"not a plist")
+
+    # Lower-cased so it can be compared with what Bonjour reports.
+    assert engine.stored_wifi_macs() == {"0e:98:d2:bb:d3:15": "UDID-1"}
+
+
+def test_stored_wifi_macs_survives_a_missing_folder(monkeypatch):
+    def boom():
+        raise OSError("no home directory")
+
+    monkeypatch.setattr(engine, "pair_record_folder", boom)
+    assert engine.stored_wifi_macs() == {}
+
+
+async def test_advertised_wifi_macs_extracts_and_lowercases(monkeypatch):
+    class Advertisement:
+        def __init__(self, instance):
+            self.instance = instance
+
+    async def fake_browse(timeout):
+        return [
+            Advertisement("0E:98:D2:BB:D3:15@fe80::1-supportsRP-24"),
+            Advertisement("3e:a2:7c:3c:13:d4@fe80::2-supportsRP-24"),
+            Advertisement("malformed-instance-without-at"),
+        ]
+
+    import pymobiledevice3.bonjour
+
+    monkeypatch.setattr(pymobiledevice3.bonjour, "browse_mobdev2", fake_browse)
+    assert await engine.advertised_wifi_macs() == {
+        "0e:98:d2:bb:d3:15",
+        "3e:a2:7c:3c:13:d4",
+    }

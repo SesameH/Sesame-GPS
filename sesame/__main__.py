@@ -208,6 +208,52 @@ def daemon_status() -> int:
 # -- pairing ---------------------------------------------------------------
 
 
+def doctor() -> int:
+    """Report whether everything Wi-Fi discovery depends on is in place.
+
+    Each of these fails in the same way from the outside -- an empty device
+    list -- so the point is to say which one it is.
+    """
+    import asyncio
+
+    from sesame.engine import advertised_wifi_macs, stored_wifi_macs
+
+    problems = 0
+
+    if tunneld_is_up():
+        print("✓ tunneld 有回應")
+    else:
+        problems += 1
+        print("✗ tunneld 沒在跑。開 Sesame 會自動啟動，或跑 sudo sesame daemon start")
+
+    if LAUNCHD_PLIST.exists():
+        print("✓ LaunchDaemon 已安裝，Mac 重開機後 tunneld 會自己起來")
+    else:
+        print("· LaunchDaemon 未安裝：Mac 每次重開機都要重新授權一次")
+        print("  裝起來就不用再輸密碼：sudo sesame daemon install")
+
+    stored = stored_wifi_macs()
+    advertised = asyncio.run(advertised_wifi_macs(4.0))
+
+    if not stored:
+        problems += 1
+        print(f"✗ 沒有配對記錄（{pair_record_folder()}）—— WiFi 一定找不到裝置")
+        print("  插上 USB 跑一次：sesame pair")
+    elif stored.keys() & advertised:
+        matched = ", ".join(sorted(stored.keys() & advertised))
+        print(f"✓ 配對記錄對得上正在廣播的裝置（{matched}）")
+    elif advertised:
+        problems += 1
+        print("✗ 配對記錄跟正在廣播的位址對不上 —— 手機換過私人 WiFi 位址了")
+        print(f"  記錄裡：{', '.join(sorted(stored))}")
+        print(f"  廣播中：{', '.join(sorted(advertised))}")
+        print("  插上 USB 重新配對一次：sesame pair")
+    else:
+        print("· 這個網路上沒有裝置在廣播。手機解鎖了嗎？跟這台在同一個 WiFi 嗎？")
+
+    return 1 if problems else 0
+
+
 def pair() -> int:
     """Pair over USB, writing the record Wi-Fi discovery needs."""
     import asyncio
@@ -587,6 +633,7 @@ def main() -> None:
     daemon_parser.add_argument("action", choices=["start", "install", "uninstall", "status"])
 
     subparsers.add_parser("pair", help="用 USB 配對一次，之後 WiFi 才找得到裝置")
+    subparsers.add_parser("doctor", help="檢查 WiFi 探索需要的每個環節")
 
     app_parser = subparsers.add_parser("app", help="產生可雙擊開啟的 .app")
     app_parser.add_argument("action", choices=["build"])
@@ -612,12 +659,15 @@ def main() -> None:
 
     # Bare `sesame --open` keeps working: fall through to the serve subcommand.
     argv = sys.argv[1:]
-    if not argv or argv[0] not in {"serve", "daemon", "app", "pair", "-h", "--help"}:
+    if not argv or argv[0] not in {"serve", "daemon", "app", "pair", "doctor", "-h", "--help"}:
         argv = ["serve", *argv]
     args = parser.parse_args(argv)
 
     if args.command == "pair":
         raise SystemExit(pair())
+
+    if args.command == "doctor":
+        raise SystemExit(doctor())
 
     if args.command == "app":
         args.dest.mkdir(parents=True, exist_ok=True)

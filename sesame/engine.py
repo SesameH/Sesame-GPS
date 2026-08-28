@@ -18,6 +18,7 @@ import contextlib
 import json
 import logging
 import math
+import plistlib
 import random
 import time
 from collections.abc import Awaitable, Callable
@@ -191,6 +192,37 @@ def has_pair_record() -> bool:
         return any(p for p in folder.glob("*.plist") if not p.name.startswith("remote_"))
     except OSError:
         return False
+
+
+def stored_wifi_macs() -> dict[str, str]:
+    """Wi-Fi MAC to UDID, from the pairing records that carry one."""
+    macs: dict[str, str] = {}
+    try:
+        paths = list(pair_record_folder().glob("*.plist"))
+    except OSError:
+        return macs
+    for path in paths:
+        if path.name.startswith("remote_"):
+            continue
+        try:
+            record = plistlib.loads(path.read_bytes())
+        except (OSError, ValueError):
+            continue
+        mac = record.get("WiFiMACAddress")
+        if mac:
+            macs[mac.lower()] = path.stem
+    return macs
+
+
+async def advertised_wifi_macs(timeout: float = 3.0) -> set[str]:
+    """Wi-Fi MACs currently broadcasting the mobdev2 service on this network."""
+    from pymobiledevice3.bonjour import browse_mobdev2
+
+    found: set[str] = set()
+    for answer in await browse_mobdev2(timeout=timeout):
+        if "@" in answer.instance:
+            found.add(answer.instance.split("@", 1)[0].lower())
+    return found
 
 
 # -- remembered devices ----------------------------------------------------

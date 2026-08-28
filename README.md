@@ -203,6 +203,21 @@ interface says so when that is the case rather than leaving you to guess.
 After pairing, the daemon picks the device up on the same Wi-Fi with no cable. A locked device may
 not be found; unlock it and rescan.
 
+**Pairing records go stale.** iOS broadcasts a *private* Wi-Fi address, and the record stores the
+one it saw at pairing time. If the phone rotates that address — rejoining the network, toggling
+Private Wi-Fi Address, forgetting and re-adding the network — the record stops matching and Wi-Fi
+goes quiet again, with exactly the same symptom as never having paired. Run `sesame pair` again.
+
+### Checking what's wrong
+
+```bash
+sesame doctor
+```
+
+Every one of these fails as an empty device list, so the point is to say which one it is: whether
+the tunnel daemon is up, whether it will survive a reboot, whether a pairing record exists, and
+whether the record still matches what is being broadcast right now.
+
 USB and Wi-Fi monitoring are both **on by default**; no flags needed.
 
 When one device is reachable over both, the list keeps the USB entry — it survives the phone
@@ -210,6 +225,15 @@ sleeping or roaming between access points.
 
 Devices you have seen before are remembered in `~/.sesame/devices.json` and stay in the list while
 offline (marked 離線, not selectable), so a phone stays recognisable by name.
+
+### What survives a restart
+
+| Restarting | Still works? |
+| --- | --- |
+| Closing the app | Yes — the pairing record is a file on disk |
+| **Rebooting the Mac** | The tunnel daemon does **not** come back unless you installed the LaunchDaemon; otherwise you are asked for a password again on first launch |
+| **Rebooting the phone** | Mount the DDI again (iOS 17+ requires it after every device boot) |
+| The phone rotating its Wi-Fi address | Pairing record no longer matches — run `sesame pair` again |
 
 ## Bundling as a double-clickable app
 
