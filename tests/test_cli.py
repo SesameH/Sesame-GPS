@@ -381,3 +381,36 @@ def test_square_mode_skips_the_mask(tmp_path):
 
     with Image.open(iconset / "icon_512x512@2x.png") as icon:
         assert icon.getpixel((2, 2))[3] == 255  # corner still opaque
+
+
+def test_daemon_start_refuses_without_root(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "pymobiledevice3_path", lambda: "/fake/pymobiledevice3")
+    monkeypatch.setattr(cli.os, "geteuid", lambda: 501)
+
+    def fail(*args, **kwargs):
+        raise AssertionError("must not launch tunneld unprivileged")
+
+    monkeypatch.setattr(cli.subprocess, "run", fail)
+    assert cli.daemon_start() == 1
+    assert "root" in capsys.readouterr().err
+
+
+def test_daemon_start_runs_tunneld_in_the_foreground(monkeypatch):
+    calls = []
+    monkeypatch.setattr(cli, "pymobiledevice3_path", lambda: "/fake/pymobiledevice3")
+    monkeypatch.setattr(cli.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(
+        cli.subprocess,
+        "run",
+        lambda command, **kwargs: calls.append(command)
+        or subprocess.CompletedProcess(command, 0),
+    )
+    assert cli.daemon_start() == 0
+    # No --daemonize: this variant is meant to be held open and Ctrl-C'd.
+    assert calls == [["/fake/pymobiledevice3", "remote", "tunneld"]]
+
+
+def test_daemon_start_reports_a_missing_pymobiledevice3(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "pymobiledevice3_path", lambda: None)
+    assert cli.daemon_start() == 1
+    assert "pymobiledevice3" in capsys.readouterr().err

@@ -10,22 +10,51 @@ Built on [pymobiledevice3](https://github.com/doronz88/pymobiledevice3). macOS o
 - macOS
 - An iPhone or iPad running **iOS 17 or later**, with Developer Mode enabled
   (Settings → Privacy & Security → Developer Mode)
-- Python 3.13+ and [uv](https://docs.astral.sh/uv/)
+- Python 3.13 or newer
 
 The device must be reachable from this Mac — over USB, or over Wi-Fi once it has been paired.
 
 ## Install
 
 ```bash
-git clone https://github.com/SesameH/Sesame-GPS.git
-cd Sesame-GPS
-uv sync
+pipx install git+https://github.com/SesameH/Sesame-GPS.git
+```
+
+`sesame` is then on your `PATH`. Upgrade later with `pipx upgrade sesame`, remove it with
+`pipx uninstall sesame`.
+
+### If you don't have pipx
+
+pipx is not pip. pip installs libraries into whatever Python environment is active; pipx installs
+*applications*, each into its own isolated environment, and puts their commands on your `PATH`.
+That matters here — this app pulls in around a hundred dependencies, and you do not want those in
+your system Python.
+
+```bash
+brew install pipx
+pipx ensurepath
+```
+
+No Homebrew? Use pip once, to get pipx itself:
+
+```bash
+python3 -m pip install --user pipx
+python3 -m pipx ensurepath
+```
+
+`ensurepath` adds `~/.local/bin` to your shell profile. Open a new terminal afterwards, or
+`source ~/.zshrc`.
+
+If you already use [uv](https://docs.astral.sh/uv/), `uv tool install` does the same job:
+
+```bash
+uv tool install git+https://github.com/SesameH/Sesame-GPS.git
 ```
 
 ## Quick start
 
 ```bash
-uv run sesame --open
+sesame --open
 ```
 
 That's the whole thing. It starts the tunnel daemon if it isn't already running (asking for your
@@ -46,10 +75,11 @@ iOS 17+ requires a RemoteXPC tunnel, and creating the network interface for it n
 the tunnel daemon runs as root — `sesame` itself does not. The daemon is started detached, so it
 **outlives** the app: restarting `sesame` does not tear down and rebuild the tunnel.
 
-Pass `--no-tunneld` to manage it yourself:
+Pass `--no-tunneld` if you would rather run the daemon yourself:
 
 ```bash
-sudo uv run pymobiledevice3 remote tunneld
+sudo sesame daemon start     # foreground, Ctrl-C to stop
+sesame --no-tunneld --open   # in another terminal
 ```
 
 ### Never being asked again
@@ -57,13 +87,13 @@ sudo uv run pymobiledevice3 remote tunneld
 Install the tunnel daemon as a LaunchDaemon and it starts at boot:
 
 ```bash
-sudo uv run sesame daemon install     # install, runs at boot
-uv run sesame daemon status           # check
-sudo uv run sesame daemon uninstall   # remove
+sudo sesame daemon install     # install, runs at boot
+sesame daemon status           # check
+sudo sesame daemon uninstall   # remove
 ```
 
 This writes `/Library/LaunchDaemons/com.sesame.tunneld.plist` and logs to
-`/var/log/sesame-tunneld.log`. After this, `uv run sesame` never touches `sudo`.
+`/var/log/sesame-tunneld.log`. After this, `sesame` never touches `sudo`.
 
 ## Setting a location
 
@@ -141,7 +171,7 @@ offline (marked 離線, not selectable), so a phone stays recognisable by name.
 ## Bundling as a double-clickable app
 
 ```bash
-uv run sesame app build          # creates ~/Applications/Sesame.app
+sesame app build          # creates ~/Applications/Sesame.app
 ```
 
 Launch it from Launchpad or Finder. With no terminal to prompt on, it asks for your password
@@ -151,9 +181,9 @@ If an instance is already running it won't start a second one — it just points
 running one. If the port is taken by something else you get a dialog, not a silent death in a log
 file.
 
-The `.app` is a **launcher, not a frozen bundle**: it points at this checkout's
-`.venv/bin/sesame`, so re-run `app build` after moving the project. This keeps the build instant
-and avoids shipping pymobiledevice3's native dependencies, which would need signing and
+The `.app` is a **launcher, not a frozen bundle**: it points at the `sesame` executable of
+whichever environment you built it from, so re-run `app build` if that moves. This keeps the build
+instant and avoids shipping pymobiledevice3's native dependencies, which would need signing and
 notarisation to run elsewhere anyway. `--dest` changes where it goes, `--port` which port it uses.
 
 The icon comes from `sesame/assets/icon.png` (`--icon` for another file; animated GIFs work, first frame
@@ -230,6 +260,17 @@ Write throttling lives in `engine.MIN_WRITE_INTERVAL` (0.1 s); the route ticker 
 | [`sesame/server.py`](sesame/server.py) | FastAPI REST endpoints and WebSocket broadcast |
 | [`sesame/static/index.html`](sesame/static/index.html) | Leaflet interface with hand-rolled vertex editing |
 | [`sesame/__main__.py`](sesame/__main__.py) | CLI, tunnel daemon management, `.app` builder |
+
+## Development
+
+```bash
+git clone https://github.com/SesameH/Sesame-GPS.git
+cd Sesame-GPS
+uv sync
+uv run sesame --open
+```
+
+Every command in this document works the same way with `uv run` in front of it.
 
 ## Tests
 

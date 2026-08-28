@@ -148,6 +148,25 @@ def daemon_install() -> int:
     return 0
 
 
+def daemon_start() -> int:
+    """Run tunneld in the foreground.
+
+    For people who would rather manage the daemon themselves than let ``serve``
+    start it. The point of routing it through here is that the
+    ``pymobiledevice3`` console script lives inside whatever environment sesame
+    was installed into -- for a pipx or uv install that is not on ``PATH``, so
+    there is otherwise no obvious command to type.
+    """
+    executable = pymobiledevice3_path()
+    if executable is None:
+        print("找不到 pymobiledevice3 執行檔。", file=sys.stderr)
+        return 1
+    if os.geteuid() != 0:
+        print(f"要 root。請跑：sudo {sys.argv[0]} daemon start", file=sys.stderr)
+        return 1
+    return subprocess.run([executable, "remote", "tunneld"], check=False).returncode
+
+
 def daemon_uninstall() -> int:
     if os.geteuid() != 0:
         print(f"要 root。請跑：sudo {sys.argv[0]} daemon uninstall", file=sys.stderr)
@@ -462,7 +481,7 @@ def main() -> None:
     serve_parser.add_argument("--verbose", action="store_true")
 
     daemon_parser = subparsers.add_parser("daemon", help="把 tunneld 裝成開機自動啟動的服務")
-    daemon_parser.add_argument("action", choices=["install", "uninstall", "status"])
+    daemon_parser.add_argument("action", choices=["start", "install", "uninstall", "status"])
 
     app_parser = subparsers.add_parser("app", help="產生可雙擊開啟的 .app")
     app_parser.add_argument("action", choices=["build"])
@@ -499,6 +518,7 @@ def main() -> None:
     if args.command == "daemon":
         raise SystemExit(
             {
+                "start": daemon_start,
                 "install": daemon_install,
                 "uninstall": daemon_uninstall,
                 "status": daemon_status,
