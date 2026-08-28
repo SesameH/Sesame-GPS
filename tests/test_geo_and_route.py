@@ -277,14 +277,10 @@ def test_stored_wifi_macs_reads_only_usable_records(tmp_path, monkeypatch):
 
     monkeypatch.setattr(engine, "pair_record_folder", lambda: tmp_path)
 
-    (tmp_path / "UDID-1.plist").write_bytes(
-        plistlib.dumps({"WiFiMACAddress": "0E:98:D2:BB:D3:15"})
-    )
+    (tmp_path / "UDID-1.plist").write_bytes(plistlib.dumps({"WiFiMACAddress": "0E:98:D2:BB:D3:15"}))
     # RemotePairing records are skipped, and a record with no MAC is useless
     # for matching a Bonjour advertisement.
-    (tmp_path / "remote_UDID-2.plist").write_bytes(
-        plistlib.dumps({"WiFiMACAddress": "3e:a2:7c:3c:13:d4"})
-    )
+    (tmp_path / "remote_UDID-2.plist").write_bytes(plistlib.dumps({"WiFiMACAddress": "3e:a2:7c:3c:13:d4"}))
     (tmp_path / "UDID-3.plist").write_bytes(plistlib.dumps({"HostID": "x"}))
     (tmp_path / "UDID-4.plist").write_bytes(b"not a plist")
 

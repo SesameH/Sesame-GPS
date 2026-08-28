@@ -255,28 +255,54 @@ def doctor() -> int:
 
 
 def pair() -> int:
-    """Pair over USB, writing the record Wi-Fi discovery needs."""
+    """Make sure a Wi-Fi-capable pairing record exists on disk.
+
+    A device trusted through Finder is already paired, and that record lives
+    with usbmuxd. Connecting over USB loads it but does not write it to our own
+    cache folder -- which is the only place Wi-Fi discovery looks. So the usual
+    case is not pairing at all, it is copying the record we already have to
+    where it can be used. Pairing afresh is the fallback for a record that
+    carries no Wi-Fi MAC, since one built here always does.
+    """
     import asyncio
+    import plistlib
 
     from pymobiledevice3.lockdown import create_using_usbmux
     from pymobiledevice3.usbmux import list_devices
 
+    from sesame.engine import pair_record_folder
+
+    async def pair_one(serial: str) -> bool:
+        lockdown = await create_using_usbmux(serial=serial)
+        async with lockdown:
+            if lockdown.pair_record is None:
+                print("尚未配對。請看手機螢幕上的「信任這台電腦」…", flush=True)
+                await lockdown.pair()
+            elif not lockdown.pair_record.get("WiFiMACAddress"):
+                print("既有記錄沒有 WiFi MAC，重新配對…請看手機螢幕。", flush=True)
+                await lockdown.pair()
+            await lockdown.save_pair_record()
+
+        written = pair_record_folder() / f"{serial}.plist"
+        if not written.exists():
+            print(f"配對後仍找不到 {written}", file=sys.stderr)
+            return False
+        mac = plistlib.loads(written.read_bytes()).get("WiFiMACAddress")
+        if not mac:
+            print(f"記錄寫好了但沒有 WiFiMACAddress，WiFi 探索仍然無法運作：{written}", file=sys.stderr)
+            return False
+        print(f"✓ {serial}\n  記錄：{written}\n  WiFi MAC：{mac}", flush=True)
+        return True
+
     async def run() -> int:
-        devices = [device for device in await list_devices() if device.connection_type == "USB"]
+        devices = [d for d in await list_devices() if d.connection_type == "USB"]
         if not devices:
             print(
                 "沒有偵測到用 USB 連著的裝置。\n配對必須走傳輸線 —— 這正是之後 WiFi 才找得到它的原因。",
                 file=sys.stderr,
             )
             return 1
-
-        for device in devices:
-            lockdown = await create_using_usbmux(serial=device.serial)
-            async with lockdown:
-                print(f"配對 {device.serial}…請看手機螢幕上的「信任這台電腦」。", flush=True)
-                await lockdown.pair()
-                print(f"完成。記錄寫在 {pair_record_folder()}", flush=True)
-        return 0
+        return 0 if all([await pair_one(d.serial) for d in devices]) else 1
 
     try:
         return asyncio.run(run())
