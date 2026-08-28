@@ -417,7 +417,7 @@ def test_daemon_start_reports_a_missing_pymobiledevice3(monkeypatch, capsys):
 
 def test_gui_sudo_shell_quotes_a_path_with_spaces(monkeypatch):
     calls = []
-    monkeypatch.setattr(cli, "tunneld_is_up", lambda *a, **k: True if calls else False)
+    monkeypatch.setattr(cli, "tunneld_is_up", lambda *a, **k: bool(calls))
     monkeypatch.setattr(cli, "pymobiledevice3_path", lambda: "/Users/Peter Huang/bin/pymobiledevice3")
     monkeypatch.setattr(
         cli.subprocess,
@@ -452,20 +452,18 @@ def test_gui_sudo_surfaces_a_cancelled_prompt(monkeypatch):
     assert "授權被取消" in message
 
 
-def test_terminal_sudo_failure_stays_off_the_dialog(monkeypatch, capsys):
+def test_terminal_sudo_failure_stays_off_the_dialog(monkeypatch):
+    dialogs = []
     monkeypatch.setattr(cli, "tunneld_is_up", lambda *a, **k: False)
     monkeypatch.setattr(cli, "pymobiledevice3_path", lambda: "/fake/pymobiledevice3")
     monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(cli, "alert", lambda message, gui: dialogs.append(gui))
 
     def boom(command, **kwargs):
         raise subprocess.CalledProcessError(1, command)
 
-    def no_dialog(*args, **kwargs):
-        raise AssertionError("a terminal run must not pop a dialog")
-
     monkeypatch.setattr(cli.subprocess, "run", boom)
-    monkeypatch.setattr(cli.subprocess, "run", boom)
-    calls = []
-    monkeypatch.setattr(cli, "alert", lambda message, gui: calls.append(gui) or no_dialog() if gui else None)
 
     assert cli.ensure_tunneld(gui_sudo=False) is False
+    # alert() still runs, but with gui=False it must stay on stderr.
+    assert dialogs == [False]
