@@ -515,3 +515,27 @@ def test_port_holder_names_the_process(monkeypatch):
 def test_port_holder_is_none_when_nothing_listens(monkeypatch):
     monkeypatch.setattr(cli.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess([], 1, stdout=""))
     assert cli.port_holder(8765) is None
+
+
+def test_every_daemon_action_is_reachable():
+    # A dispatch entry with no matching choice is unreachable, and argparse
+    # rejects it before the code is ever consulted.
+    parser_choices = set()
+    import argparse
+
+    original = argparse.ArgumentParser.add_argument
+
+    def capture(self, *args, **kwargs):
+        if args and args[0] == "action" and "choices" in kwargs:
+            parser_choices.update(kwargs["choices"])
+        return original(self, *args, **kwargs)
+
+    argparse.ArgumentParser.add_argument = capture
+    try:
+        with pytest.raises(SystemExit):
+            cli.sys.argv = ["sesame", "daemon", "--help"]
+            cli.main()
+    finally:
+        argparse.ArgumentParser.add_argument = original
+
+    assert {"start", "restart", "install", "uninstall", "status"} <= parser_choices

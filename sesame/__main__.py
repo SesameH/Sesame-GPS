@@ -681,7 +681,7 @@ def main() -> None:
     serve_parser.add_argument("--verbose", action="store_true")
 
     daemon_parser = subparsers.add_parser("daemon", help="把 tunneld 裝成開機自動啟動的服務")
-    daemon_parser.add_argument("action", choices=["start", "install", "uninstall", "status"])
+    daemon_parser.add_argument("action", choices=["start", "restart", "install", "uninstall", "status"])
 
     subparsers.add_parser("pair", help="用 USB 配對一次，之後 WiFi 才找得到裝置")
     subparsers.add_parser("doctor", help="檢查 WiFi 探索需要的每個環節")
