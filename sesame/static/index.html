@@ -532,38 +532,90 @@ function describeDevice(device) {
   return `${device.name} · iOS ${device.iosVersion}${badge ? ' · ' + badge : ''}`;
 }
 
-async function refreshDevices() {
+// A freshly started tunnel daemon has not finished looking yet: it polls for
+// paired devices on the network every few seconds, and each one still needs a
+// handshake. USB usually beats the first scan, Wi-Fi rarely does -- so an empty
+// result means "keep looking", not "nothing there".
+const SCAN_RETRY_MS = 3000;
+const SCAN_RETRY_LIMIT = 12;   // ~36 s, comfortably past a cold tunnel start
+let scanTimer = null;
+
+function stopScanning() {
+  if (scanTimer !== null) {
+    clearTimeout(scanTimer);
+    scanTimer = null;
+  }
+}
+
+async function fetchDevices() {
+  const response = await fetch('/api/devices');
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || response.statusText);
+  return data.devices;
+}
+
+function fillDeviceSelect(devices) {
   const select = $('deviceSelect');
+  const previous = select.value;
+  select.innerHTML = '';
+  for (const device of devices) {
+    const option = document.createElement('option');
+    option.value = device.udid;
+    option.textContent = describeDevice(device);
+    // Remembered but unreachable: shown so the phone stays recognisable,
+    // not selectable because there is no tunnel to talk over.
+    option.disabled = !device.online;
+    select.appendChild(option);
+  }
+  if (previous) select.value = previous;
+}
+
+async function refreshDevices({ attempt = 0 } = {}) {
+  const select = $('deviceSelect');
+  stopScanning();
+
+  let devices;
   try {
-    const response = await fetch('/api/devices');
-    const data = await response.json();
-    if (!response.ok) throw new Error(data.detail || response.statusText);
-    select.innerHTML = '';
-    if (!data.devices.length) {
-      select.innerHTML = '<option value="">找不到裝置</option>';
-      toast('tunneld 沒有回報任何裝置。裝置有插著、或跟這台電腦在同一個 WiFi 嗎？');
-      return;
-    }
-    for (const device of data.devices) {
-      const option = document.createElement('option');
-      option.value = device.udid;
-      option.textContent = describeDevice(device);
-      // Remembered but unreachable: shown so the phone stays recognisable,
-      // not selectable because there is no tunnel to talk over.
-      option.disabled = !device.online;
-      select.appendChild(option);
-    }
-    const online = data.devices.filter((device) => device.online).length;
-    if (!online) toast('記得的裝置都不在線上。插上 USB，或確認手機跟電腦在同一個 WiFi。');
+    devices = await fetchDevices();
   } catch (error) {
     select.innerHTML = '<option value="">tunneld 未啟動</option>';
     toast(error.message);
+    return;
   }
+
+  const online = devices.filter((device) => device.online);
+  if (online.length) {
+    fillDeviceSelect(devices);
+    return;
+  }
+
+  const keepLooking = attempt < SCAN_RETRY_LIMIT;
+  if (devices.length) {
+    fillDeviceSelect(devices);
+  } else {
+    select.innerHTML = keepLooking
+      ? `<option value="">搜尋中… (${attempt + 1}/${SCAN_RETRY_LIMIT})</option>`
+      : '<option value="">找不到裝置</option>';
+  }
+
+  if (keepLooking) {
+    if (attempt === 0) {
+      toast('還在找裝置。剛啟動的 tunnel 要幾秒才會看到 WiFi 上的手機，手機也要解鎖。');
+    }
+    scanTimer = setTimeout(() => refreshDevices({ attempt: attempt + 1 }), SCAN_RETRY_MS);
+    return;
+  }
+
+  toast(devices.length
+    ? '記得的裝置都不在線上。插上 USB，或確認手機跟電腦在同一個 WiFi 並已解鎖。'
+    : '找不到任何裝置。檢查 USB、「信任這台電腦」，以及開發者模式。');
 }
-$('refreshBtn').onclick = refreshDevices;
+
+$('refreshBtn').onclick = () => refreshDevices();
 $('connectBtn').onclick = async () => {
   const udid = $('deviceSelect').value;
   if (!udid) { toast('先選一台裝置。'); return; }
+  stopScanning();
   try { await api('/api/connect', { udid }); } catch (error) { toast(error.message); }
 };
 $('disconnectBtn').onclick = () => api('/api/disconnect').catch((e) => toast(e.message));

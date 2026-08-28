@@ -421,18 +421,29 @@ def alert(message: str, gui: bool) -> None:
         )
 
 
-def sesame_already_serving(url: str) -> bool:
-    """Whether the address is answering as a sesame instance rather than something else."""
-    try:
-        with urllib.request.urlopen(f"{url}/api/status", timeout=1.5) as response:
-            return "session" in json.load(response)
-    except (urllib.error.URLError, OSError, ValueError):
-        return False
+def sesame_already_serving(url: str, attempts: int = 3, timeout: float = 2.5) -> bool:
+    """Whether the address is answering as a sesame instance rather than something else.
+
+    Retried, because an instance that is still starting up answers late and
+    being wrong here turns into a "port is taken" dialog for what is really
+    just the app the user already had open.
+    """
+    for attempt in range(attempts):
+        try:
+            with urllib.request.urlopen(f"{url}/api/status", timeout=timeout) as response:
+                return "session" in json.load(response)
+        except (urllib.error.URLError, OSError, ValueError):
+            if attempt + 1 < attempts:
+                time.sleep(0.5)
+    return False
 
 
 def port_is_free(host: str, port: int) -> tuple[bool, str]:
     """Probe the address by binding it, reporting why if that fails."""
     probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    # Match uvicorn, which sets this before binding; without it the probe can
+    # refuse a port that uvicorn would have taken happily.
+    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
         probe.bind((host, port))
     except OSError as error:
@@ -440,6 +451,23 @@ def port_is_free(host: str, port: int) -> tuple[bool, str]:
     finally:
         probe.close()
     return True, ""
+
+
+def port_holder(port: int) -> str | None:
+    """Name of the process holding a port, for a message the user can act on."""
+    try:
+        listed = subprocess.run(["lsof", "-ti", f":{port}"], capture_output=True, text=True, check=False)
+        pids = listed.stdout.split()
+        if not pids:
+            return None
+        described = subprocess.run(
+            ["ps", "-o", "comm=", "-p", pids[0]], capture_output=True, text=True, check=False
+        )
+        # `ps -o comm=` gives a full path on macOS; the basename is what reads.
+        name = Path(described.stdout.strip()).name
+        return f"{name} (pid {pids[0]})" if name else f"pid {pids[0]}"
+    except OSError:
+        return None
 
 
 def serve(args: argparse.Namespace) -> int:
@@ -464,7 +492,19 @@ def serve(args: argparse.Namespace) -> int:
     # to be caught here to be reportable.
     free, reason = port_is_free(args.host, args.port)
     if not free:
-        alert(f"開不起來：{args.host}:{args.port} 被別的程式佔用了。\n\n{reason}", args.gui_sudo)
+        # Starting tunneld can take half a minute, which is long enough for an
+        # instance to have finished starting since the check at the top.
+        if sesame_already_serving(url):
+            print(f"已經有一個 sesame 在 {url}，直接開過去。", flush=True)
+            webbrowser.open(url)
+            return 0
+        holder = port_holder(args.port)
+        blame = f"佔用它的是 {holder}。" if holder else reason
+        alert(
+            f"開不起來：{args.host}:{args.port} 被別的程式佔用了。\n\n{blame}\n\n"
+            f"換一個連接埠：sesame --port 8766",
+            args.gui_sudo,
+        )
         return 1
 
     print(f"sesame listening on {url}", flush=True)

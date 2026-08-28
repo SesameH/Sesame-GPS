@@ -467,3 +467,50 @@ def test_terminal_sudo_failure_stays_off_the_dialog(monkeypatch):
     assert cli.ensure_tunneld(gui_sudo=False) is False
     # alert() still runs, but with gui=False it must stay on stderr.
     assert dialogs == [False]
+
+
+def test_port_is_free_matches_uvicorns_socket_options(monkeypatch):
+    captured = {}
+    real_socket = socket.socket
+
+    class RecordingSocket(real_socket):
+        def setsockopt(self, level, option, value):
+            captured[(level, option)] = value
+            return super().setsockopt(level, option, value)
+
+    monkeypatch.setattr(cli.socket, "socket", RecordingSocket)
+    cli.port_is_free("127.0.0.1", 0)
+    # uvicorn sets this before binding; the probe has to agree or it can refuse
+    # a port uvicorn would have taken.
+    assert captured.get((socket.SOL_SOCKET, socket.SO_REUSEADDR)) == 1
+
+
+def test_already_serving_retries_a_slow_starter(monkeypatch):
+    attempts = []
+
+    def refuse(url, timeout):
+        attempts.append(url)
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(cli.urllib.request, "urlopen", refuse)
+    monkeypatch.setattr(cli.time, "sleep", lambda _: None)
+
+    assert cli.sesame_already_serving("http://127.0.0.1:8765", attempts=3) is False
+    # A single shot would call a still-booting instance "some other program".
+    assert len(attempts) == 3
+
+
+def test_port_holder_names_the_process(monkeypatch):
+    outputs = iter(
+        [
+            subprocess.CompletedProcess([], 0, stdout="4242\n"),
+            subprocess.CompletedProcess([], 0, stdout="Python\n"),
+        ]
+    )
+    monkeypatch.setattr(cli.subprocess, "run", lambda *a, **k: next(outputs))
+    assert cli.port_holder(8765) == "Python (pid 4242)"
+
+
+def test_port_holder_is_none_when_nothing_listens(monkeypatch):
+    monkeypatch.setattr(cli.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess([], 1, stdout=""))
+    assert cli.port_holder(8765) is None
