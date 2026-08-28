@@ -504,10 +504,11 @@ def test_port_holder_names_the_process(monkeypatch):
     outputs = iter(
         [
             subprocess.CompletedProcess([], 0, stdout="4242\n"),
-            subprocess.CompletedProcess([], 0, stdout="Python\n"),
+            subprocess.CompletedProcess([], 0, stdout="/opt/homebrew/bin/Python\n"),
         ]
     )
     monkeypatch.setattr(cli.subprocess, "run", lambda *a, **k: next(outputs))
+    # macOS reports a full path; only the basename is worth putting in a dialog.
     assert cli.port_holder(8765) == "Python (pid 4242)"
 
 
