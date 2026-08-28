@@ -169,6 +169,30 @@ async def list_devices() -> list[dict]:
     return list(unique.values()) + offline
 
 
+# -- pairing records -------------------------------------------------------
+
+
+def pair_record_folder() -> FilePath:
+    from pymobiledevice3.common import get_home_folder
+
+    return get_home_folder()
+
+
+def has_pair_record() -> bool:
+    """Whether a Wi-Fi-capable pairing record exists.
+
+    Wi-Fi discovery matches the Wi-Fi MAC a device broadcasts over Bonjour
+    against ``WiFiMACAddress`` in a stored pairing record. usbmuxd keeps its
+    own records elsewhere, so a device can work perfectly over the cable while
+    Wi-Fi finds nothing at all -- there is simply nothing to match against.
+    """
+    try:
+        folder = pair_record_folder()
+        return any(p for p in folder.glob("*.plist") if not p.name.startswith("remote_"))
+    except OSError:
+        return False
+
+
 # -- remembered devices ----------------------------------------------------
 
 STORE_PATH = FilePath.home() / ".sesame" / "devices.json"

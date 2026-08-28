@@ -188,10 +188,20 @@ The device list comes from the tunnel daemon and is labelled by how each device 
 | `USB` | usbmuxd over the cable, or a USB CDC-NCM interface | Cable attached |
 | `WiFi` | mobdev2 (Bonjour lookup of paired devices), a usbmux network device, or RemotePairing | Previously paired + same network |
 
-**For Wi-Fi discovery**, the device must have been paired with this Mac at least once — connected
-by cable and "Trust This Computer" accepted — which leaves a pairing record in `/var/db/lockdown`.
-After that, the daemon picks it up on the same Wi-Fi with no cable. A locked device may not be
-found; unlock it and rescan.
+**For Wi-Fi discovery, pair once over USB:**
+
+```bash
+sesame pair
+```
+
+This is not the same as "Trust This Computer". Wi-Fi discovery works by matching the Wi-Fi MAC a
+device broadcasts over Bonjour against `WiFiMACAddress` in a pairing record under
+`~/.pymobiledevice3`. usbmuxd keeps its own records elsewhere, so **a device can work perfectly
+over the cable while Wi-Fi finds nothing at all** — there is simply nothing to match against. The
+interface says so when that is the case rather than leaving you to guess.
+
+After pairing, the daemon picks the device up on the same Wi-Fi with no cable. A locked device may
+not be found; unlock it and rescan.
 
 USB and Wi-Fi monitoring are both **on by default**; no flags needed.
 
@@ -330,8 +340,13 @@ loop wrapping, and end-of-route behaviour.
 **`cannot reach tunneld`** — the daemon isn't running, or wasn't started with `sudo`.
 
 **No devices found** — check the cable, "Trust This Computer" on the device, and Settings →
-Privacy & Security → Developer Mode. For Wi-Fi, the device must have been paired over USB at least
-once and be on the same network. Unlock the screen and rescan.
+Privacy & Security → Developer Mode.
+
+**Found over USB but never over Wi-Fi** — you are missing a pairing record. Plug in and run
+`sesame pair`, then unplug. See [Device discovery](#device-discovery) for why the two paths differ.
+
+**Nothing on Wi-Fi even after pairing** — unlock the phone and rescan. A freshly started tunnel
+daemon also needs a few seconds; the interface retries for about thirty.
 
 **Mounting the DDI fails** — the first mount downloads a personalized image from Apple, so it needs
 internet access. On iOS 17+ this must be redone after every device reboot.

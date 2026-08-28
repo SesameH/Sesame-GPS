@@ -76,3 +76,21 @@ def test_without_the_hook_nothing_shuts_down(quick_grace):
         with client.websocket_connect("/ws") as socket:
             socket.receive_json()
         assert client.get("/api/status").status_code == 200
+
+
+def test_devices_reports_whether_wifi_discovery_is_possible(monkeypatch):
+    from sesame import engine
+
+    async def no_devices():
+        return []
+
+    monkeypatch.setattr(engine, "get_tunneld_devices", no_devices)
+    monkeypatch.setattr(engine, "STORE_PATH", engine.FilePath("/nonexistent/devices.json"))
+
+    monkeypatch.setattr(server_module, "has_pair_record", lambda: False)
+    with TestClient(create_app()) as client:
+        assert client.get("/api/devices").json()["canDiscoverOverWifi"] is False
+
+    monkeypatch.setattr(server_module, "has_pair_record", lambda: True)
+    with TestClient(create_app()) as client:
+        assert client.get("/api/devices").json()["canDiscoverOverWifi"] is True

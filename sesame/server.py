@@ -13,7 +13,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from sesame.engine import DeviceSession, RouteRunner, list_devices
+from sesame.engine import DeviceSession, RouteRunner, has_pair_record, list_devices
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +119,12 @@ def create_app(on_idle: Callable[[], None] | None = None) -> FastAPI:
     @app.get("/api/devices")
     async def devices() -> dict:
         try:
-            return {"devices": await list_devices()}
+            # canDiscoverOverWifi tells the interface whether an empty result is
+            # worth waiting on or is simply impossible as configured.
+            return {
+                "devices": await list_devices(),
+                "canDiscoverOverWifi": has_pair_record(),
+            }
         except Exception as error:
             raise HTTPException(
                 status_code=503,

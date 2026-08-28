@@ -249,3 +249,24 @@ async def test_online_device_is_not_duplicated_by_its_stored_copy(store, monkeyp
 def test_unreadable_store_is_treated_as_empty(store):
     store.write_text("{ not json")
     assert engine.load_known_devices() == {}
+
+
+def test_has_pair_record_sees_a_wifi_capable_record(tmp_path, monkeypatch):
+    monkeypatch.setattr(engine, "pair_record_folder", lambda: tmp_path)
+    assert engine.has_pair_record() is False
+
+    # RemotePairing records live alongside but carry no WiFiMACAddress, so they
+    # cannot make Wi-Fi discovery work and must not be counted.
+    (tmp_path / "remote_something.plist").write_text("")
+    assert engine.has_pair_record() is False
+
+    (tmp_path / "00008130-000479CA0C90001C.plist").write_text("")
+    assert engine.has_pair_record() is True
+
+
+def test_has_pair_record_survives_an_unreadable_folder(monkeypatch):
+    def boom():
+        raise OSError("no home directory")
+
+    monkeypatch.setattr(engine, "pair_record_folder", boom)
+    assert engine.has_pair_record() is False

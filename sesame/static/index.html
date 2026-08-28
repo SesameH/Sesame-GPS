@@ -547,10 +547,13 @@ function stopScanning() {
   }
 }
 
+let canDiscoverOverWifi = true;
+
 async function fetchDevices() {
   const response = await fetch('/api/devices');
   const data = await response.json();
   if (!response.ok) throw new Error(data.detail || response.statusText);
+  canDiscoverOverWifi = data.canDiscoverOverWifi !== false;
   return data.devices;
 }
 
@@ -598,14 +601,24 @@ async function refreshDevices({ attempt = 0 } = {}) {
       : '<option value="">找不到裝置</option>';
   }
 
+  // Without a pairing record, Wi-Fi discovery has nothing to match the
+  // broadcast MAC against, so waiting will never help.
+  if (!canDiscoverOverWifi && attempt === 0) {
+    toast('WiFi 找不到裝置：還沒有配對記錄。插上 USB 跑一次 `sesame pair`，之後不用線也找得到。');
+  }
+
   if (keepLooking) {
-    if (attempt === 0) {
+    if (attempt === 0 && canDiscoverOverWifi) {
       toast('還在找裝置。剛啟動的 tunnel 要幾秒才會看到 WiFi 上的手機，手機也要解鎖。');
     }
     scanTimer = setTimeout(() => refreshDevices({ attempt: attempt + 1 }), SCAN_RETRY_MS);
     return;
   }
 
+  if (!canDiscoverOverWifi) {
+    toast('WiFi 探索需要配對記錄。插上 USB 跑一次 `sesame pair`。');
+    return;
+  }
   toast(devices.length
     ? '記得的裝置都不在線上。插上 USB，或確認手機跟電腦在同一個 WiFi 並已解鎖。'
     : '找不到任何裝置。檢查 USB、「信任這台電腦」，以及開發者模式。');

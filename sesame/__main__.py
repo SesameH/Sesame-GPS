@@ -24,6 +24,7 @@ import uvicorn
 from pymobiledevice3.tunneld.api import TUNNELD_DEFAULT_ADDRESS
 
 from sesame import __version__
+from sesame.engine import pair_record_folder
 from sesame.server import create_app
 
 LAUNCHD_LABEL = "com.sesame.tunneld"
@@ -202,6 +203,40 @@ def daemon_status() -> int:
         f"（http://{TUNNELD_DEFAULT_ADDRESS[0]}:{TUNNELD_DEFAULT_ADDRESS[1]}）"
     )
     return 0
+
+
+# -- pairing ---------------------------------------------------------------
+
+
+def pair() -> int:
+    """Pair over USB, writing the record Wi-Fi discovery needs."""
+    import asyncio
+
+    from pymobiledevice3.lockdown import create_using_usbmux
+    from pymobiledevice3.usbmux import list_devices
+
+    async def run() -> int:
+        devices = [device for device in await list_devices() if device.connection_type == "USB"]
+        if not devices:
+            print(
+                "沒有偵測到用 USB 連著的裝置。\n配對必須走傳輸線 —— 這正是之後 WiFi 才找得到它的原因。",
+                file=sys.stderr,
+            )
+            return 1
+
+        for device in devices:
+            lockdown = await create_using_usbmux(serial=device.serial)
+            async with lockdown:
+                print(f"配對 {device.serial}…請看手機螢幕上的「信任這台電腦」。", flush=True)
+                await lockdown.pair()
+                print(f"完成。記錄寫在 {pair_record_folder()}", flush=True)
+        return 0
+
+    try:
+        return asyncio.run(run())
+    except Exception as error:
+        print(f"配對失敗：{type(error).__name__}: {error}", file=sys.stderr)
+        return 1
 
 
 # -- .app bundle -----------------------------------------------------------
@@ -551,6 +586,8 @@ def main() -> None:
     daemon_parser = subparsers.add_parser("daemon", help="把 tunneld 裝成開機自動啟動的服務")
     daemon_parser.add_argument("action", choices=["start", "install", "uninstall", "status"])
 
+    subparsers.add_parser("pair", help="用 USB 配對一次，之後 WiFi 才找得到裝置")
+
     app_parser = subparsers.add_parser("app", help="產生可雙擊開啟的 .app")
     app_parser.add_argument("action", choices=["build"])
     app_parser.add_argument(
@@ -575,9 +612,12 @@ def main() -> None:
 
     # Bare `sesame --open` keeps working: fall through to the serve subcommand.
     argv = sys.argv[1:]
-    if not argv or argv[0] not in {"serve", "daemon", "app", "-h", "--help"}:
+    if not argv or argv[0] not in {"serve", "daemon", "app", "pair", "-h", "--help"}:
         argv = ["serve", *argv]
     args = parser.parse_args(argv)
+
+    if args.command == "pair":
+        raise SystemExit(pair())
 
     if args.command == "app":
         args.dest.mkdir(parents=True, exist_ok=True)
