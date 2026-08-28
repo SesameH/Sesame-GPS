@@ -129,3 +129,11 @@ def test_pair_endpoint_surfaces_an_unexpected_failure(monkeypatch):
         response = client.post("/api/pair")
     assert response.status_code == 502
     assert "ValueError" in response.json()["detail"]
+
+
+def test_index_is_always_revalidated():
+    with TestClient(create_app()) as client:
+        response = client.get("/")
+    # An upgraded interface must not sit behind a heuristically cached copy.
+    assert response.headers["cache-control"] == "no-cache"
+    assert response.headers["etag"]

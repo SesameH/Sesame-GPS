@@ -113,7 +113,10 @@ def create_app(on_idle: Callable[[], None] | None = None) -> FastAPI:
 
     @app.get("/")
     async def index() -> FileResponse:
-        return FileResponse(STATIC_DIR / "index.html")
+        # Without an explicit directive browsers cache heuristically and can
+        # keep serving an old interface after an upgrade. The ETag still means
+        # an unchanged page costs a 304 rather than a re-download.
+        return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})
 
     @app.get("/icon.png")
     async def icon() -> FileResponse:
