@@ -10,7 +10,7 @@ Built on [pymobiledevice3](https://github.com/doronz88/pymobiledevice3). macOS o
 - macOS
 - An iPhone or iPad running **iOS 17 or later**, with Developer Mode enabled
   (Settings → Privacy & Security → Developer Mode)
-- Python 3.13 or newer
+- Python 3.13 or newer (macOS ships 3.9 — see [Install](#install))
 
 The device must be reachable from this Mac — over USB, or over Wi-Fi once it has been paired.
 
@@ -30,22 +30,55 @@ pipx is not pip. pip installs libraries into whatever Python environment is acti
 That matters here — this app pulls in around a hundred dependencies, and you do not want those in
 your system Python.
 
-```bash
-brew install pipx
-pipx ensurepath
+You also need a **Python 3.13 or newer**. macOS ships 3.9, which is too old — installing with it
+fails outright:
+
+```
+ERROR: Package 'sesame' requires a different Python: 3.9.6 not in '>=3.13'
 ```
 
-No Homebrew? Use pip once, to get pipx itself:
+Homebrew is the least painful way to get both.
+
+**Install Homebrew** ([brew.sh](https://brew.sh)) if you don't have it:
 
 ```bash
-python3 -m pip install --user pipx
-python3 -m pipx ensurepath
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+On Apple Silicon it installs to `/opt/homebrew`, which is not on `PATH` by default. The installer
+prints these two lines at the end — run them:
+
+```bash
+echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
+eval "$(/opt/homebrew/bin/brew shellenv)"
+```
+
+**Then install pipx and a modern Python:**
+
+```bash
+brew install pipx python@3.13
+pipx ensurepath
 ```
 
 `ensurepath` adds `~/.local/bin` to your shell profile. Open a new terminal afterwards, or
 `source ~/.zshrc`.
 
-If you already use [uv](https://docs.astral.sh/uv/), `uv tool install` does the same job:
+**Without Homebrew:** get Python 3.13+ from [python.org](https://www.python.org/downloads/macos/),
+then use it to install pipx:
+
+```bash
+python3.13 -m pip install --user pipx
+python3.13 -m pipx ensurepath
+```
+
+**If pipx picks the wrong Python** — the version error above — point it at the right one:
+
+```bash
+pipx install --python python3.13 git+https://github.com/SesameH/Sesame-GPS.git
+```
+
+**Already using [uv](https://docs.astral.sh/uv/)?** It does the same job and fetches a suitable
+Python by itself:
 
 ```bash
 uv tool install git+https://github.com/SesameH/Sesame-GPS.git
