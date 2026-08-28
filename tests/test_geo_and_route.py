@@ -356,7 +356,7 @@ async def test_diagnose_reports_a_missing_record(offline_network):
     offline_network.setattr(engine, "advertised_wifi_macs", lambda timeout=3.0: advertising())
     result = await engine.diagnose_wifi()
     assert result["ok"] is False
-    assert "配對" in result["actions"][0]
+    assert result["code"] == "no-record"
 
 
 async def test_diagnose_is_happy_when_a_record_matches(offline_network):
@@ -380,8 +380,9 @@ async def test_diagnose_calls_out_private_addresses(offline_network):
     offline_network.setattr(engine, "advertised_wifi_macs", lambda timeout=3.0: advertising())
     result = await engine.diagnose_wifi()
     assert result["ok"] is False
-    assert "私人" in result["reason"]
-    assert any("重新配對沒有用" in action for action in result["actions"])
+    # Pairing again would write the same hardware address, so the caller must
+    # be able to tell this apart from a rotation.
+    assert result["code"] == "private-address"
 
 
 async def test_diagnose_reports_an_empty_network(offline_network):
@@ -393,7 +394,7 @@ async def test_diagnose_reports_an_empty_network(offline_network):
     offline_network.setattr(engine, "advertised_wifi_macs", lambda timeout=3.0: nothing())
     result = await engine.diagnose_wifi()
     assert result["ok"] is False
-    assert any("解鎖" in action for action in result["actions"])
+    assert result["code"] == "nothing-advertised"
 
 
 async def test_diagnose_suggests_repairing_a_rotated_address(offline_network):
@@ -406,7 +407,7 @@ async def test_diagnose_suggests_repairing_a_rotated_address(offline_network):
     offline_network.setattr(engine, "advertised_wifi_macs", lambda timeout=3.0: advertising())
     result = await engine.diagnose_wifi()
     assert result["ok"] is False
-    assert any("USB 配對" in action for action in result["actions"])
+    assert result["code"] == "rotated-address"
 
 
 async def test_diagnose_blames_a_stuck_daemon_before_anything_else(offline_network):
@@ -426,8 +427,7 @@ async def test_diagnose_blames_a_stuck_daemon_before_anything_else(offline_netwo
 
     result = await engine.diagnose_wifi()
     assert result["ok"] is False
-    assert "卡住" in result["reason"]
-    assert any("daemon restart" in action for action in result["actions"])
+    assert result["code"] == "stuck-daemon"
 
 
 async def test_diagnose_does_not_blame_the_daemon_when_it_holds_tunnels(offline_network):
@@ -443,7 +443,7 @@ async def test_diagnose_does_not_blame_the_daemon_when_it_holds_tunnels(offline_
     offline_network.setattr(engine, "discoverable_udids", lambda timeout=4.0: reachable())
     offline_network.setattr(engine, "tunneld_tunnel_count", lambda: 1)
 
-    assert "卡住" not in ((await engine.diagnose_wifi())["reason"] or "")
+    assert (await engine.diagnose_wifi())["code"] != "stuck-daemon"
 
 
 def test_tunneld_tunnel_count_is_none_when_unreachable(monkeypatch):
@@ -477,4 +477,4 @@ async def test_diagnose_is_satisfied_by_a_working_tunnel(offline_network):
 
     result = await engine.diagnose_wifi()
     assert result["ok"] is True
-    assert result["reason"] is None
+    assert result["code"] == "ok"

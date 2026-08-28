@@ -276,9 +276,19 @@ async def discoverable_udids(timeout: float = 4.0) -> set[str]:
 async def diagnose_wifi() -> dict:
     """Why Wi-Fi discovery can or cannot find anything right now.
 
-    Every one of these states looks identical from the outside -- an empty
-    device list -- and one of them cannot be fixed by pairing again, so saying
-    which is the whole point.
+    Returns a machine-readable ``code`` rather than a message, because the same
+    finding has to be phrased for the terminal and for the interface, in
+    whichever language the reader chose.
+
+    ==================== ==========================================
+    ``ok``               a tunnel exists; nothing to investigate
+    ``stuck-daemon``     device reachable, daemon holding no tunnel
+    ``no-record``        never paired, so nothing can ever match
+    ``nothing-advertised`` no device broadcasting on this network
+    ``private-address``  record holds a hardware address, the air
+                         carries randomised ones; pairing cannot fix
+    ``rotated-address``  both randomised; the device changed address
+    ==================== ==========================================
     """
     stored = stored_wifi_macs()
     advertised = await advertised_wifi_macs(4.0)
@@ -292,67 +302,37 @@ async def diagnose_wifi() -> dict:
     }
 
     if tunnels:
-        return {
-            **detail,
-            "ok": True,
-            "reason": None,
-            "actions": [],
-        }
+        return {**detail, "ok": True, "code": "ok"}
 
     if reachable and tunnels == 0:
-        return {
-            **detail,
-            "ok": False,
-            "reason": "裝置在網路上找得到，但 tunneld 一個 tunnel 都沒建立 —— 它卡住了。",
-            "actions": [
-                "重啟 tunnel daemon：sudo sesame daemon restart",
-                "tunneld 對每個位址只嘗試一次，失敗後不會重試，長時間執行後就會這樣。",
-            ],
-        }
+        return {**detail, "ok": False, "code": "stuck-daemon"}
 
     if not stored:
-        return {
-            **detail,
-            "ok": False,
-            "reason": "沒有配對記錄，WiFi 一定找不到裝置。",
-            "actions": ["插上 USB 線，按「USB 配對」。"],
-        }
+        return {**detail, "ok": False, "code": "no-record"}
 
     if stored.keys() & advertised:
-        return {**detail, "ok": True, "reason": None, "actions": []}
+        return {**detail, "ok": True, "code": "ok"}
 
     if not advertised:
-        return {
-            **detail,
-            "ok": False,
-            "reason": "這個網路上沒有裝置在廣播。",
-            "actions": [
-                "解鎖手機。",
-                "確認手機跟這台電腦連在同一個 WiFi。",
-            ],
-        }
+        return {**detail, "ok": False, "code": "nothing-advertised"}
 
     if any(not is_private_mac(mac) for mac in stored) and all(is_private_mac(mac) for mac in advertised):
-        return {
-            **detail,
-            "ok": False,
-            "reason": "配對記錄存的是真實硬體位址，但手機廣播的是私人位址，永遠對不上。",
-            "actions": [
-                "重新配對沒有用 —— 寫進去的還是同一個真實位址。",
-                "手機上：設定 → WiFi → 網路旁的 ⓘ → 私人 WiFi 位址 → 關閉，再重新連線。",
-            ],
-        }
+        return {**detail, "ok": False, "code": "private-address"}
 
-    return {
-        **detail,
-        "ok": False,
-        "reason": "配對記錄跟正在廣播的位址對不上，手機換過位址了。",
-        "actions": ["插上 USB 線，按「USB 配對」重新寫一次記錄。"],
-    }
+    return {**detail, "ok": False, "code": "rotated-address"}
 
 
 class PairingError(RuntimeError):
-    """Pairing could not produce a record Wi-Fi discovery can use."""
+    """Pairing could not produce a record Wi-Fi discovery can use.
+
+    ``code`` is ``no-cable`` when there is nothing to pair with, and
+    ``unusable-record`` when a record was written but cannot serve Wi-Fi
+    discovery.
+    """
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 async def pair_over_usb() -> list[dict]:
@@ -376,7 +356,9 @@ async def pair_over_usb() -> list[dict]:
     devices = [device for device in await list_devices() if device.connection_type == "USB"]
     if not devices:
         raise PairingError(
-            "沒有偵測到用 USB 連著的裝置。配對必須走傳輸線 —— 這正是之後 WiFi 才找得到它的原因。"
+            "no-cable",
+            "No device found on USB. Pairing has to happen over the cable — "
+            "that is exactly what lets Wi-Fi find it afterwards.",
         )
 
     results = []
@@ -391,10 +373,13 @@ async def pair_over_usb() -> list[dict]:
 
         written = pair_record_folder() / f"{device.serial}.plist"
         if not written.exists():
-            raise PairingError(f"配對後仍找不到記錄檔：{written}")
+            raise PairingError("unusable-record", f"No pairing record was written at {written}")
         mac = plistlib.loads(written.read_bytes()).get("WiFiMACAddress")
         if not mac:
-            raise PairingError(f"記錄寫好了但沒有 WiFiMACAddress，WiFi 探索仍然無法運作：{written}")
+            raise PairingError(
+                "unusable-record",
+                f"The record at {written} carries no WiFiMACAddress, so Wi-Fi discovery still cannot work.",
+            )
         results.append({"udid": device.serial, "wifiMac": mac, "record": str(written)})
     return results
 

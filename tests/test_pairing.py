@@ -116,7 +116,7 @@ async def test_a_record_that_never_lands_is_an_error(usb, monkeypatch):
         self.saved += 1
 
     monkeypatch.setattr(FakeLockdown, "save_pair_record", save_nothing)
-    with pytest.raises(PairingError, match="找不到記錄檔"):
+    with pytest.raises(PairingError, match="No pairing record"):
         await pair_over_usb()
 
 

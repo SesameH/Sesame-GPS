@@ -251,13 +251,7 @@ def doctor() -> int:
     """
     import asyncio
 
-    from sesame.engine import (
-        advertised_wifi_macs,
-        discoverable_udids,
-        is_private_mac,
-        stored_wifi_macs,
-        tunneld_tunnel_count,
-    )
+    from sesame.engine import diagnose_wifi, tunneld_tunnel_count
 
     problems = 0
 
@@ -283,38 +277,35 @@ def doctor() -> int:
         print("✓ WiFi 探索正常運作")
         return 1 if problems else 0
 
-    stored = stored_wifi_macs()
-    advertised = asyncio.run(advertised_wifi_macs(4.0))
-    reachable = asyncio.run(discoverable_udids())
-    if reachable and tunnels == 0:
-        problems += 1
-        print(f"✗ 網路上找得到裝置（{', '.join(sorted(reachable))}）但 tunneld 一個 tunnel 都沒有")
-        print("  它卡住了。重啟：sudo sesame daemon restart")
+    finding = asyncio.run(diagnose_wifi())
+    if finding["ok"]:
+        print("✓ WiFi 探索正常運作")
+        return 1 if problems else 0
 
-    if not stored:
-        problems += 1
+    problems += 1
+    stored = ", ".join(finding["storedMacs"]) or "（無）"
+    advertised = ", ".join(finding["advertisedMacs"]) or "（無）"
+
+    if finding["code"] == "stuck-daemon":
+        print(f"✗ 網路上找得到裝置（{', '.join(finding['reachableUdids'])}）但 tunneld 一個 tunnel 都沒有")
+        print("  它卡住了。重啟：sudo sesame daemon restart")
+    elif finding["code"] == "no-record":
         print(f"✗ 沒有配對記錄（{pair_record_folder()}）—— WiFi 一定找不到裝置")
         print("  插上 USB 跑一次：sesame pair")
-    elif stored.keys() & advertised:
-        matched = ", ".join(sorted(stored.keys() & advertised))
-        print(f"✓ 配對記錄對得上正在廣播的裝置（{matched}）")
-    elif advertised:
-        problems += 1
+    elif finding["code"] == "nothing-advertised":
+        print("✗ 這個網路上沒有裝置在廣播")
+        print("  解鎖手機，並確認它跟這台電腦在同一個 WiFi。")
+    elif finding["code"] == "private-address":
         print("✗ 配對記錄跟正在廣播的位址對不上")
-        print(f"  記錄裡：{', '.join(sorted(stored))}")
-        print(f"  廣播中：{', '.join(sorted(advertised))}")
-        real_in_record = any(not is_private_mac(mac) for mac in stored)
-        all_advertised_private = all(is_private_mac(mac) for mac in advertised)
-        if real_in_record and all_advertised_private:
-            # Re-pairing cannot fix this: it would store the hardware address
-            # again, which is not what the device puts on the air.
-            print("  記錄存的是真實硬體位址，廣播的全是私人位址 —— 重新配對沒有用。")
-            print("  請在手機上關掉這個網路的私人位址：")
-            print("  設定 → Wi-Fi → 網路旁的 ⓘ → 私人 Wi-Fi 位址 → 關閉，然後重新連線")
-        else:
-            print("  手機換過位址了。插上 USB 重新配對一次：sesame pair")
+        print(f"  記錄裡：{stored}")
+        print(f"  廣播中：{advertised}")
+        print("  記錄存的是真實硬體位址，廣播的全是私人位址 —— 重新配對沒有用。")
+        print("  手機上：設定 → WiFi → 網路旁的 ⓘ → 私人 WiFi 位址 → 關閉，再重新連線")
     else:
-        print("· 這個網路上沒有裝置在廣播。手機解鎖了嗎？跟這台在同一個 WiFi 嗎？")
+        print("✗ 配對記錄跟正在廣播的位址對不上，手機換過位址了")
+        print(f"  記錄裡：{stored}")
+        print(f"  廣播中：{advertised}")
+        print("  插上 USB 重新配對一次：sesame pair")
 
     return 1 if problems else 0
 

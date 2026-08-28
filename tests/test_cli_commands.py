@@ -127,7 +127,7 @@ def test_pair_reports_a_pairing_error(monkeypatch, capsys):
     from sesame import engine
 
     async def refuse():
-        raise engine.PairingError("沒有偵測到用 USB 連著的裝置。")
+        raise engine.PairingError("no-cable", "No device found on USB.")
 
     monkeypatch.setattr(engine, "pair_over_usb", refuse)
     assert cli.pair() == 1

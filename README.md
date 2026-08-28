@@ -95,12 +95,12 @@ password once), serves the interface on <http://127.0.0.1:8765>, and opens your 
 
 Then:
 
-1. **重新掃描** (Rescan) → pick your device → **連線** (Connect)
-2. Press **掛載 DDI** (Mount DDI) once — needed on first run and after every device reboot
+1. **Rescan** → pick your device → **Connect**
+2. Press **Mount DDI** once — needed on first run and after every device reboot
 3. Click anywhere on the map to put the device there
 
-> The interface is currently in Traditional Chinese. English labels are given in brackets
-> throughout this document.
+The interface is in English by default; the button in the top-left corner switches it to
+Traditional Chinese and remembers the choice.
 
 ### Why it needs your password
 
@@ -132,9 +132,9 @@ This writes `/Library/LaunchDaemons/com.sesame.tunneld.plist` and logs to
 
 There are three ways to place the device.
 
-**Click the map.** In **點擊瞬移** (Click to teleport) mode, a click sends that point to the device.
+**Click the map.** In **Click to teleport** mode, a click sends that point to the device.
 
-**Type it.** The 位置 (Location) field takes coordinates or a place name:
+**Type it.** The **Location** field takes coordinates or a place name:
 
 | Input | Example |
 | --- | --- |
@@ -148,16 +148,16 @@ name** only looks it up and fills in the coordinates, leaving the send to you.
 
 Four buttons, all of which accept coordinates or a place name:
 
-- **定位到此** (Go here) — send to the device
-- **只移動地圖** (Pan only) — move the map, leave the device alone
-- **加到路線** (Add to route) — append to the route, for typing an exact path
-- **帶入目前位置** (Use current) — fill the field with the device's current simulated position
+- **Go here** — send to the device
+- **Pan only** — move the map, leave the device alone
+- **Add to route** — append to the route, for typing an exact path
+- **Use current** — fill the field with the device's current simulated position
 
 **Draw a route.** See below.
 
 ## Routes
 
-Switch to **畫路線** (Draw route) mode, then:
+Switch to **Draw route** mode, then:
 
 - **Click the map** to add a point
 - **Drag a circle** to move it
@@ -166,15 +166,15 @@ Switch to **畫路線** (Draw route) mode, then:
 
 Every edit is live — there is no separate "finish drawing" step.
 
-Set a speed and press **開始** (Start). Controls:
+Set a speed and press **Start**. Controls:
 
 | Control | Behaviour |
 | --- | --- |
 | Speed | Adjustable **while running** — takes effect on the next tick. Presets: walk 5, jog 10, bike 20, drive 60 km/h |
-| **循環** (Loop) | On reaching the end, continue from the start |
-| **抖動** (Jitter) | Add 0–3 m of random offset so the track isn't a perfect line |
+| **Loop** | On reaching the end, continue from the start |
+| **Jitter** | Add 0–3 m of random offset so the track isn't a perfect line |
 | Progress bar | Drag to seek |
-| **暫停** / **停止** (Pause / Stop) | Pausing does not accumulate distance |
+| **Pause** / **Stop** | Pausing does not accumulate distance |
 
 Movement is parameterised by **arc length**, not by vertex index: the device reports the speed you
 asked for whether you drew two points or two thousand. See [How it works](#how-it-works).
@@ -188,7 +188,7 @@ The device list comes from the tunnel daemon and is labelled by how each device 
 | `USB` | usbmuxd over the cable, or a USB CDC-NCM interface | Cable attached |
 | `WiFi` | mobdev2 (Bonjour lookup of paired devices), a usbmux network device, or RemotePairing | Previously paired + same network |
 
-**For Wi-Fi discovery, pair once over USB** — press **USB 配對** in the interface, or:
+**For Wi-Fi discovery, pair once over USB** — press **Pair over USB** in the interface, or:
 
 ```bash
 sesame pair
@@ -239,7 +239,7 @@ When one device is reachable over both, the list keeps the USB entry — it surv
 sleeping or roaming between access points.
 
 Devices you have seen before are remembered in `~/.sesame/devices.json` and stay in the list while
-offline (marked 離線, not selectable), so a phone stays recognisable by name.
+offline (marked offline, not selectable), so a phone stays recognisable by name.
 
 ### What survives a restart
 
@@ -284,6 +284,8 @@ Icon processing:
   824/1024 of the canvas per Apple's icon grid so it sits at the same visual size as everything
   else in the Dock. The corner mask is the one antialiased part of the pipeline; a hard-edged
   superellipse looks ragged at small sizes. `--square` skips it.
+
+The map opens over San Jose. Type anywhere into the Location field to go elsewhere.
 
 ## Basemaps
 

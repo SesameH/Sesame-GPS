@@ -100,14 +100,15 @@ def test_pair_endpoint_reports_a_missing_cable(monkeypatch):
     from sesame import engine
 
     async def no_cable():
-        raise engine.PairingError("沒有偵測到用 USB 連著的裝置。")
+        raise engine.PairingError("no-cable", "No device found on USB.")
 
     monkeypatch.setattr(server_module, "pair_over_usb", no_cable)
     with TestClient(create_app()) as client:
         response = client.post("/api/pair")
-    # A user-fixable situation, not a server fault.
+    # A user-fixable situation, not a server fault. The code travels so the
+    # interface can phrase it in the reader's language.
     assert response.status_code == 409
-    assert "USB" in response.json()["detail"]
+    assert response.json()["detail"]["code"] == "no-cable"
 
 
 def test_pair_endpoint_returns_the_written_records(monkeypatch):

@@ -180,7 +180,10 @@ def create_app(on_idle: Callable[[], None] | None = None) -> FastAPI:
         try:
             return {"paired": await pair_over_usb()}
         except PairingError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
+            # The code lets the interface phrase this in the reader's language.
+            raise HTTPException(
+                status_code=409, detail={"code": error.code, "message": str(error)}
+            ) from error
         except Exception as error:
             raise HTTPException(status_code=502, detail=f"{type(error).__name__}: {error}") from error
 
