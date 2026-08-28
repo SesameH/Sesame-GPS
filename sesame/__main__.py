@@ -77,11 +77,15 @@ def ensure_tunneld(gui_sudo: bool = False) -> bool:
 
     if gui_sudo:
         print("tunneld 沒在跑，跳出授權對話框啟動…", flush=True)
-        command = f"{applescript_string(executable)} remote tunneld --daemonize"
+        # Two levels of quoting: shlex for the shell that `do shell script`
+        # spawns, then AppleScript escaping for the literal it sits inside. A
+        # pipx install lives under the home directory, so an account name with
+        # a space in it splits the path without the first one.
+        command = f"{shlex.quote(executable)} remote tunneld --daemonize"
         launch = [
             "osascript",
             "-e",
-            f'do shell script "{command}" with administrator privileges',
+            f'do shell script "{applescript_string(command)}" with administrator privileges',
         ]
     elif not sys.stdin.isatty():
         print(
@@ -95,9 +99,17 @@ def ensure_tunneld(gui_sudo: bool = False) -> bool:
         launch = ["sudo", executable, "remote", "tunneld", "--daemonize"]
 
     try:
-        subprocess.run(launch, check=True)
-    except (subprocess.CalledProcessError, KeyboardInterrupt) as error:
-        print(f"啟動 tunneld 失敗：{error}", file=sys.stderr)
+        subprocess.run(launch, capture_output=gui_sudo, text=True, check=True)
+    except subprocess.CalledProcessError as error:
+        # osascript reports a cancelled password prompt as -128 on stderr; with
+        # no terminal to read, that has to become a dialog or it is invisible.
+        detail = (error.stderr or "").strip() or str(error)
+        if "-128" in detail:
+            detail = "授權被取消。"
+        alert(f"啟動 tunneld 失敗。\n\n{detail}", gui_sudo)
+        return False
+    except KeyboardInterrupt:
+        print("啟動 tunneld 被中斷。", file=sys.stderr)
         return False
 
     deadline = time.monotonic() + TUNNELD_STARTUP_TIMEOUT
@@ -107,7 +119,11 @@ def ensure_tunneld(gui_sudo: bool = False) -> bool:
             return True
         time.sleep(0.5)
 
-    print(f"tunneld 啟動後 {TUNNELD_STARTUP_TIMEOUT:.0f} 秒內沒有回應。", file=sys.stderr)
+    alert(
+        f"tunneld 啟動後 {TUNNELD_STARTUP_TIMEOUT:.0f} 秒內沒有回應。\n\n"
+        f"看看 {APP_LOG.replace('$HOME', str(Path.home()))} 有沒有線索。",
+        gui_sudo,
+    )
     return False
 
 

@@ -402,8 +402,7 @@ def test_daemon_start_runs_tunneld_in_the_foreground(monkeypatch):
     monkeypatch.setattr(
         cli.subprocess,
         "run",
-        lambda command, **kwargs: calls.append(command)
-        or subprocess.CompletedProcess(command, 0),
+        lambda command, **kwargs: calls.append(command) or subprocess.CompletedProcess(command, 0),
     )
     assert cli.daemon_start() == 0
     # No --daemonize: this variant is meant to be held open and Ctrl-C'd.
@@ -414,3 +413,59 @@ def test_daemon_start_reports_a_missing_pymobiledevice3(monkeypatch, capsys):
     monkeypatch.setattr(cli, "pymobiledevice3_path", lambda: None)
     assert cli.daemon_start() == 1
     assert "pymobiledevice3" in capsys.readouterr().err
+
+
+def test_gui_sudo_shell_quotes_a_path_with_spaces(monkeypatch):
+    calls = []
+    monkeypatch.setattr(cli, "tunneld_is_up", lambda *a, **k: True if calls else False)
+    monkeypatch.setattr(cli, "pymobiledevice3_path", lambda: "/Users/Peter Huang/bin/pymobiledevice3")
+    monkeypatch.setattr(
+        cli.subprocess,
+        "run",
+        lambda command, **kwargs: calls.append(command) or subprocess.CompletedProcess(command, 0),
+    )
+
+    assert cli.ensure_tunneld(gui_sudo=True) is True
+
+    script = calls[0][2]
+    # Unquoted, the shell inside `do shell script` splits the home directory
+    # and never finds the executable.
+    assert "'/Users/Peter Huang/bin/pymobiledevice3'" in script
+    assert script.startswith("do shell script ")
+    assert script.endswith(" with administrator privileges")
+
+
+def test_gui_sudo_surfaces_a_cancelled_prompt(monkeypatch):
+    dialogs = []
+    monkeypatch.setattr(cli, "tunneld_is_up", lambda *a, **k: False)
+    monkeypatch.setattr(cli, "pymobiledevice3_path", lambda: "/fake/pymobiledevice3")
+    monkeypatch.setattr(cli, "alert", lambda message, gui: dialogs.append((message, gui)))
+
+    def cancelled(command, **kwargs):
+        raise subprocess.CalledProcessError(1, command, stderr="execution error: User canceled. (-128)")
+
+    monkeypatch.setattr(cli.subprocess, "run", cancelled)
+
+    assert cli.ensure_tunneld(gui_sudo=True) is False
+    message, gui = dialogs[0]
+    assert gui is True
+    assert "授權被取消" in message
+
+
+def test_terminal_sudo_failure_stays_off_the_dialog(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "tunneld_is_up", lambda *a, **k: False)
+    monkeypatch.setattr(cli, "pymobiledevice3_path", lambda: "/fake/pymobiledevice3")
+    monkeypatch.setattr(cli.sys.stdin, "isatty", lambda: True)
+
+    def boom(command, **kwargs):
+        raise subprocess.CalledProcessError(1, command)
+
+    def no_dialog(*args, **kwargs):
+        raise AssertionError("a terminal run must not pop a dialog")
+
+    monkeypatch.setattr(cli.subprocess, "run", boom)
+    monkeypatch.setattr(cli.subprocess, "run", boom)
+    calls = []
+    monkeypatch.setattr(cli, "alert", lambda message, gui: calls.append(gui) or no_dialog() if gui else None)
+
+    assert cli.ensure_tunneld(gui_sudo=False) is False
