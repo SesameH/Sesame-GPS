@@ -1,0 +1,635 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sesame</title>
+<link rel="icon" type="image/png" href="/icon.png">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root {
+    --bg: #12141a; --panel: #1a1d26; --line: #2b3040; --text: #e6e8ef;
+    --muted: #8b93a8; --accent: #5b8cff; --ok: #37c98b; --warn: #f0a83c; --bad: #f4635e;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; height: 100vh; display: flex; background: var(--bg); color: var(--text);
+         font: 13px/1.45 -apple-system, "SF Pro Text", "PingFang TC", system-ui, sans-serif; }
+  #map { flex: 1; }
+  #panel { width: 320px; flex: none; background: var(--panel); border-right: 1px solid var(--line);
+           overflow-y: auto; display: flex; flex-direction: column; }
+  section { padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  h1 { margin: 0; font-size: 15px; letter-spacing: .12em; text-transform: uppercase; }
+  .brand { display: flex; align-items: center; gap: 9px; }
+  /* Pixel art: keep the hard edges instead of letting the browser smooth them. */
+  .brand img { width: 28px; height: 28px; image-rendering: pixelated; border-radius: 5px; }
+  h2 { margin: 0 0 8px; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+  label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+  select, input[type=text], input[type=number] {
+    width: 100%; padding: 6px 8px; background: #10121a; color: var(--text);
+    border: 1px solid var(--line); border-radius: 6px; font: inherit; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  button { padding: 7px 10px; background: #232839; color: var(--text); border: 1px solid var(--line);
+           border-radius: 6px; font: inherit; cursor: pointer; }
+  button:hover:not(:disabled) { background: #2c3348; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { background: #3a2226; border-color: #5a2f34; color: #ffb4b0; }
+  button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .row { display: flex; gap: 6px; }
+  .row > * { flex: 1; }
+  .grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .stack > * + * { margin-top: 8px; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 11px;
+          padding: 3px 8px; border-radius: 999px; background: #232839; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+  .dot.connected { background: var(--ok); }
+  .dot.connecting, .dot.reconnecting { background: var(--warn); }
+  .dot.error { background: var(--bad); }
+  .meta { font-size: 11px; color: var(--muted); }
+  .meta b { color: var(--text); font-weight: 500; font-variant-numeric: tabular-nums; }
+  .bar { height: 4px; background: #10121a; border-radius: 2px; overflow: hidden; margin-top: 6px; }
+  .bar > i { display: block; height: 100%; background: var(--accent); width: 0; }
+  .hint { font-size: 11px; color: var(--muted); }
+  #toast { position: absolute; left: 336px; top: 12px; z-index: 900; max-width: 460px;
+           padding: 8px 12px; border-radius: 8px; background: #3a2226; border: 1px solid #5a2f34;
+           color: #ffb4b0; font-size: 12px; display: none; }
+  .leaflet-container { background: #0c0e13; }
+  .leaflet-control-layers, .leaflet-bar a {
+    background: var(--panel); color: var(--text); border-color: var(--line); }
+  .leaflet-bar a:hover { background: #2c3348; color: var(--text); }
+  .leaflet-control-layers-expanded { padding: 8px 10px; font: inherit; }
+  .leaflet-control-layers label { color: var(--text); margin: 0; }
+  .leaflet-control-attribution {
+    background: rgba(18, 20, 26, .8) !important; color: var(--muted); font-size: 10px; }
+  .leaflet-control-attribution a { color: var(--accent); }
+  .vertex-label { font-size: 10px; color: #fff; text-shadow: 0 0 3px #000; }
+</style>
+</head>
+<body>
+<div id="panel">
+  <section>
+    <div class="brand">
+      <img id="brandIcon" src="/icon.png" alt="" onerror="this.remove()">
+      <h1>Sesame</h1>
+    </div>
+    <div class="meta" style="margin-top:6px">iOS 定位模擬 · 等速路線</div>
+  </section>
+
+  <section class="stack">
+    <h2>裝置</h2>
+    <select id="deviceSelect"><option value="">尚未偵測</option></select>
+    <div class="row">
+      <button id="refreshBtn">重新掃描</button>
+      <button id="connectBtn" class="primary">連線</button>
+    </div>
+    <div class="row">
+      <button id="mountBtn">掛載 DDI</button>
+      <button id="disconnectBtn" class="danger">斷線</button>
+    </div>
+    <div>
+      <span class="pill"><span id="stateDot" class="dot"></span><span id="stateText">未連線</span></span>
+    </div>
+    <div class="meta" id="deviceMeta"></div>
+    <div class="meta" id="statsMeta"></div>
+  </section>
+
+  <section class="stack">
+    <h2>模式</h2>
+    <div class="row">
+      <button id="modeTeleport" class="on">點擊瞬移</button>
+      <button id="modeDraw">畫路線</button>
+    </div>
+    <div class="hint" id="modeHint">在地圖上點一下就把裝置定位過去。</div>
+  </section>
+
+  <section class="stack">
+    <h2>位置</h2>
+    <input type="text" id="placeInput" placeholder="25.033964, 121.564468 或 台北101">
+    <div class="row">
+      <button id="gotoBtn" class="primary">定位到此</button>
+      <button id="panBtn">只移動地圖</button>
+    </div>
+    <div class="row">
+      <button id="appendBtn">加到路線</button>
+      <button id="fillBtn">帶入目前位置</button>
+    </div>
+    <div class="hint">座標吃十進位、DMS、Google Maps 連結；打地名會先查再填回座標。Enter：座標直接定位，地名先搜尋。</div>
+  </section>
+
+  <section class="stack">
+    <h2>路線</h2>
+    <div class="meta">節點 <b id="pointCount">0</b> · 長度 <b id="routeLength">0 m</b></div>
+    <div class="row">
+      <button id="undoBtn">退一點</button>
+      <button id="clearRouteBtn">清除路線</button>
+    </div>
+    <label>速度 <b id="speedValue">5.0</b> km/h</label>
+    <input type="range" id="speedRange" min="0.5" max="120" step="0.5" value="5">
+    <div class="grid4">
+      <button data-speed="5">步行</button>
+      <button data-speed="10">慢跑</button>
+      <button data-speed="20">單車</button>
+      <button data-speed="60">開車</button>
+    </div>
+    <div class="row">
+      <button id="loopBtn">循環 關</button>
+      <button id="jitterBtn">抖動 關</button>
+    </div>
+    <div class="row">
+      <button id="playBtn" class="primary">開始</button>
+      <button id="pauseBtn" disabled>暫停</button>
+      <button id="stopBtn" disabled>停止</button>
+    </div>
+    <div>
+      <div class="meta"><b id="progressText">0 / 0 m</b> · 剩餘 <b id="etaText">—</b></div>
+      <div class="bar"><i id="progressBar"></i></div>
+      <input type="range" id="seekRange" min="0" max="1" step="0.001" value="0">
+    </div>
+  </section>
+
+  <section class="stack">
+    <h2>目前位置</h2>
+    <div class="meta" id="posMeta">—</div>
+    <button id="clearLocBtn">還原真實 GPS</button>
+  </section>
+</div>
+
+<div id="map"></div>
+<div id="toast"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const map = L.map('map', { zoomControl: true }).setView([25.0330, 121.5654], 14);
+
+// Every source here is keyless. CARTO's basemaps now stamp "API KEY REQUIRED"
+// across each tile *and still answer 200*, so a paid source fails silently as a
+// dark blank map rather than as an error -- not worth the risk for a default.
+const ESRI_ATTRIBUTION = '&copy; <a href="https://www.esri.com">Esri</a>';
+const OSM_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+
+const darkBase = L.layerGroup([
+  L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+    { attribution: ESRI_ATTRIBUTION, maxZoom: 16 }),
+  // Separate reference layer; the Esri canvas bases ship without labels.
+  L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}',
+    { maxZoom: 16 }),
+]);
+
+const streets = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: OSM_ATTRIBUTION, maxZoom: 19,
+});
+
+const satellite = L.layerGroup([
+  L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    { attribution: ESRI_ATTRIBUTION, maxZoom: 19 }),
+  L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+    { maxZoom: 19 }),
+]);
+
+// Registered before the first layer is added, so the default base is covered too.
+map.on('layeradd', (event) => {
+  if (event.layer.on) event.layer.on('tileerror', () => toast('圖磚載入失敗，換一個圖層或檢查網路。'));
+});
+
+darkBase.addTo(map);
+L.control.layers({ '深色': darkBase, '街道': streets, '衛星': satellite }, null,
+                 { position: 'topright' }).addTo(map);
+
+const state = {
+  mode: 'teleport',
+  points: [],          // [{lat, lng}]
+  markers: [],         // vertex markers, index-aligned with points
+  loop: false,
+  jitter: false,
+  speed: 5,
+  running: false,
+  paused: false,
+  seeking: false,
+  lastPosition: null,   // most recent simulated position, for 帶入目前位置
+};
+
+const line = L.polyline([], { color: '#5b8cff', weight: 4, opacity: .85 }).addTo(map);
+const ghost = L.circleMarker([0, 0], {
+  radius: 7, color: '#fff', weight: 2, fillColor: '#37c98b', fillOpacity: 1,
+});
+let ghostOnMap = false;
+
+const $ = (id) => document.getElementById(id);
+
+function toast(message) {
+  const box = $('toast');
+  box.textContent = message;
+  box.style.display = 'block';
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(() => { box.style.display = 'none'; }, 6000);
+}
+
+async function api(path, body) {
+  const options = body === undefined
+    ? { method: 'POST' }
+    : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
+  const response = await fetch(path, options);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.detail || response.statusText);
+  return data;
+}
+
+// ---- route editing -------------------------------------------------------
+// Vertices are plain draggable markers rather than a draw-plugin's modal
+// state machine: click adds, drag moves, right-click deletes, and clicking the
+// line inserts a vertex at that spot. Every edit is live.
+
+function makeVertex(latlng, index) {
+  const marker = L.circleMarker(latlng, {
+    radius: 6, color: '#fff', weight: 2, fillColor: '#5b8cff', fillOpacity: 1,
+    draggable: true, bubblingMouseEvents: false,
+  });
+  marker.on('mousedown', (event) => {
+    // circleMarker has no built-in dragging, so pan is disabled while dragging.
+    L.DomEvent.stop(event);
+    map.dragging.disable();
+    const move = (moveEvent) => {
+      marker.setLatLng(moveEvent.latlng);
+      state.points[state.markers.indexOf(marker)] = moveEvent.latlng;
+      redraw(false);
+    };
+    const up = () => {
+      map.off('mousemove', move).off('mouseup', up);
+      map.dragging.enable();
+      redraw();
+    };
+    map.on('mousemove', move).on('mouseup', up);
+  });
+  marker.on('contextmenu', (event) => {
+    L.DomEvent.stop(event);
+    const at = state.markers.indexOf(marker);
+    if (at >= 0) { removeVertex(at); }
+  });
+  marker.addTo(map);
+  state.markers.splice(index, 0, marker);
+  state.points.splice(index, 0, latlng);
+  return marker;
+}
+
+function removeVertex(index) {
+  map.removeLayer(state.markers[index]);
+  state.markers.splice(index, 1);
+  state.points.splice(index, 1);
+  redraw();
+}
+
+function clearRoute() {
+  state.markers.forEach((marker) => map.removeLayer(marker));
+  state.markers = [];
+  state.points = [];
+  redraw();
+}
+
+function metersBetween(a, b) { return map.distance(a, b); }
+
+function routeLength() {
+  let total = 0;
+  for (let i = 1; i < state.points.length; i += 1) {
+    total += metersBetween(state.points[i - 1], state.points[i]);
+  }
+  return total;
+}
+
+function redraw(updateStats = true) {
+  line.setLatLngs(state.points);
+  if (!updateStats) return;
+  $('pointCount').textContent = state.points.length;
+  const length = routeLength();
+  $('routeLength').textContent = length >= 1000
+    ? (length / 1000).toFixed(2) + ' km'
+    : length.toFixed(0) + ' m';
+}
+
+line.on('click', (event) => {
+  if (state.mode !== 'draw') return;
+  L.DomEvent.stop(event);
+  // Insert into whichever segment the click landed closest to.
+  let best = 1;
+  let bestDistance = Infinity;
+  for (let i = 1; i < state.points.length; i += 1) {
+    const midpoint = L.latLng(
+      (state.points[i - 1].lat + state.points[i].lat) / 2,
+      (state.points[i - 1].lng + state.points[i].lng) / 2,
+    );
+    const distance = metersBetween(midpoint, event.latlng);
+    if (distance < bestDistance) { bestDistance = distance; best = i; }
+  }
+  makeVertex(event.latlng, best);
+  redraw();
+});
+
+map.on('click', async (event) => {
+  if (state.mode === 'draw') {
+    makeVertex(event.latlng, state.points.length);
+    redraw();
+    return;
+  }
+  try {
+    await api('/api/location', { lat: event.latlng.lat, lon: event.latlng.lng });
+  } catch (error) { toast(error.message); }
+});
+
+// ---- controls ------------------------------------------------------------
+
+function setMode(mode) {
+  state.mode = mode;
+  $('modeTeleport').classList.toggle('on', mode === 'teleport');
+  $('modeDraw').classList.toggle('on', mode === 'draw');
+  $('modeHint').textContent = mode === 'draw'
+    ? '點地圖加點 · 拖曳圓點移動 · 右鍵刪除 · 點線上插入中繼點。'
+    : '在地圖上點一下就把裝置定位過去。';
+}
+$('modeTeleport').onclick = () => setMode('teleport');
+$('modeDraw').onclick = () => setMode('draw');
+
+$('undoBtn').onclick = () => { if (state.points.length) removeVertex(state.points.length - 1); };
+$('clearRouteBtn').onclick = clearRoute;
+
+function setSpeed(value, push = true) {
+  state.speed = value;
+  $('speedRange').value = value;
+  $('speedValue').textContent = value.toFixed(1);
+  if (push && state.running) api('/api/route/speed', { speed_kmh: value }).catch((e) => toast(e.message));
+}
+$('speedRange').oninput = (event) => setSpeed(parseFloat(event.target.value));
+document.querySelectorAll('[data-speed]').forEach((button) => {
+  button.onclick = () => setSpeed(parseFloat(button.dataset.speed));
+});
+
+$('loopBtn').onclick = () => {
+  state.loop = !state.loop;
+  $('loopBtn').classList.toggle('on', state.loop);
+  $('loopBtn').textContent = '循環 ' + (state.loop ? '開' : '關');
+};
+$('jitterBtn').onclick = () => {
+  state.jitter = !state.jitter;
+  $('jitterBtn').classList.toggle('on', state.jitter);
+  $('jitterBtn').textContent = '抖動 ' + (state.jitter ? '開' : '關');
+};
+
+$('playBtn').onclick = async () => {
+  if (state.paused) {
+    try { await api('/api/route/resume'); } catch (error) { toast(error.message); }
+    return;
+  }
+  if (state.points.length < 2) { toast('先切到「畫路線」畫至少兩個點。'); return; }
+  try {
+    await api('/api/route/start', {
+      points: state.points.map((p) => [p.lat, p.lng]),
+      speed_kmh: state.speed,
+      loop: state.loop,
+      jitter_m: state.jitter ? 3 : 0,
+    });
+  } catch (error) { toast(error.message); }
+};
+$('pauseBtn').onclick = () => api('/api/route/pause').catch((e) => toast(e.message));
+$('stopBtn').onclick = () => api('/api/route/stop').catch((e) => toast(e.message));
+$('clearLocBtn').onclick = () => api('/api/clear').catch((e) => toast(e.message));
+
+const seek = $('seekRange');
+seek.addEventListener('pointerdown', () => { state.seeking = true; });
+seek.addEventListener('change', async () => {
+  try { await api('/api/route/seek', { fraction: parseFloat(seek.value) }); }
+  catch (error) { toast(error.message); }
+  finally { state.seeking = false; }
+});
+
+// ---- coordinate input ----------------------------------------------------
+// One parser behind both the search box and the lat/lon fields, so anything
+// you can paste in one place works in the other.
+
+const DMS_RE = /(\d+(?:\.\d+)?)\s*°\s*(?:(\d+(?:\.\d+)?)\s*['\u2032]\s*)?(?:(\d+(?:\.\d+)?)\s*["\u2033]?\s*)?([NSEW])/gi;
+const DECIMAL_RE = /^(-?\d+(?:\.\d+)?)\s*[,;\s]\s*(-?\d+(?:\.\d+)?)$/;
+
+function validCoordinates(lat, lon) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+  if (Math.abs(lat) > 90 || Math.abs(lon) > 180) return null;
+  return { lat, lon };
+}
+
+function parseCoordinates(text) {
+  const raw = (text || '').trim();
+  if (!raw) return null;
+
+  // Google Maps: .../@25.03,121.56,17z  and  ?q=25.03,121.56
+  const at = raw.match(/@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/);
+  if (at) return validCoordinates(parseFloat(at[1]), parseFloat(at[2]));
+  const query = raw.match(/[?&](?:q|ll|daddr|destination)=(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/);
+  if (query) return validCoordinates(parseFloat(query[1]), parseFloat(query[2]));
+
+  // Degrees/minutes/seconds, e.g. 25°02'02.3"N 121°33'52.1"E
+  const parts = [...raw.matchAll(DMS_RE)];
+  if (parts.length === 2) {
+    const axes = {};
+    for (const part of parts) {
+      const value = parseFloat(part[1])
+        + (part[2] ? parseFloat(part[2]) / 60 : 0)
+        + (part[3] ? parseFloat(part[3]) / 3600 : 0);
+      const hemisphere = part[4].toUpperCase();
+      const axis = (hemisphere === 'N' || hemisphere === 'S') ? 'lat' : 'lon';
+      axes[axis] = (hemisphere === 'S' || hemisphere === 'W') ? -value : value;
+    }
+    if ('lat' in axes && 'lon' in axes) return validCoordinates(axes.lat, axes.lon);
+  }
+
+  const decimal = raw.match(DECIMAL_RE);
+  if (decimal) return validCoordinates(parseFloat(decimal[1]), parseFloat(decimal[2]));
+
+  return null;
+}
+
+function showCoordinates(point) {
+  $('placeInput').value = `${point.lat.toFixed(6)}, ${point.lon.toFixed(6)}`;
+}
+
+async function geocode(query) {
+  try {
+    const response = await fetch(
+      'https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(query));
+    const results = await response.json();
+    if (!results.length) { toast('找不到「' + query + '」'); return null; }
+    return { lat: parseFloat(results[0].lat), lon: parseFloat(results[0].lon) };
+  } catch (error) { toast('搜尋失敗：' + error.message); return null; }
+}
+
+// Every button funnels through here, so each one takes coordinates or a place
+// name interchangeably. Resolved names are written back as coordinates.
+async function resolvePlace() {
+  const text = $('placeInput').value.trim();
+  if (!text) { toast('先輸入座標或地名。'); return null; }
+  const parsed = parseCoordinates(text);
+  if (parsed) { showCoordinates(parsed); return parsed; }
+  const found = await geocode(text);
+  if (found) showCoordinates(found);
+  return found;
+}
+
+function focusOn(point, minZoom = 15) {
+  map.setView([point.lat, point.lon], Math.max(map.getZoom(), minZoom));
+}
+
+$('gotoBtn').onclick = async () => {
+  const point = await resolvePlace();
+  if (!point) return;
+  focusOn(point);
+  try { await api('/api/location', { lat: point.lat, lon: point.lon }); }
+  catch (error) { toast(error.message); }
+};
+
+$('panBtn').onclick = async () => {
+  const point = await resolvePlace();
+  if (point) focusOn(point);
+};
+
+$('appendBtn').onclick = async () => {
+  const point = await resolvePlace();
+  if (!point) return;
+  makeVertex(L.latLng(point.lat, point.lon), state.points.length);
+  redraw();
+  focusOn(point);
+  setMode('draw');
+};
+
+$('fillBtn').onclick = () => {
+  if (!state.lastPosition) { toast('裝置目前沒有模擬位置。'); return; }
+  showCoordinates(state.lastPosition);
+};
+
+$('placeInput').onkeydown = async (event) => {
+  if (event.key !== 'Enter') return;
+  const text = $('placeInput').value.trim();
+  if (!text) return;
+
+  // Coordinates are unambiguous, so Enter sends them straight to the device.
+  // A place name only gets looked up and filled in, leaving the send to you.
+  if (parseCoordinates(text)) { $('gotoBtn').click(); return; }
+  const found = await geocode(text);
+  if (!found) return;
+  showCoordinates(found);
+  focusOn(found, 16);
+  toast('已填入座標，按「定位到此」送出。');
+};
+
+// ---- device --------------------------------------------------------------
+
+const TRANSPORT_LABEL = { usb: 'USB', wifi: 'WiFi', unknown: '' };
+
+function describeDevice(device) {
+  if (!device.online) {
+    const seen = device.lastSeen ? device.lastSeen.replace('T', ' ').replace('+00:00', '') : '';
+    return `${device.name} · 離線${seen ? '（上次 ' + seen + ' UTC）' : ''}`;
+  }
+  const badge = TRANSPORT_LABEL[device.transport] || '';
+  return `${device.name} · iOS ${device.iosVersion}${badge ? ' · ' + badge : ''}`;
+}
+
+async function refreshDevices() {
+  const select = $('deviceSelect');
+  try {
+    const response = await fetch('/api/devices');
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || response.statusText);
+    select.innerHTML = '';
+    if (!data.devices.length) {
+      select.innerHTML = '<option value="">找不到裝置</option>';
+      toast('tunneld 沒有回報任何裝置。裝置有插著、或跟這台電腦在同一個 WiFi 嗎？');
+      return;
+    }
+    for (const device of data.devices) {
+      const option = document.createElement('option');
+      option.value = device.udid;
+      option.textContent = describeDevice(device);
+      // Remembered but unreachable: shown so the phone stays recognisable,
+      // not selectable because there is no tunnel to talk over.
+      option.disabled = !device.online;
+      select.appendChild(option);
+    }
+    const online = data.devices.filter((device) => device.online).length;
+    if (!online) toast('記得的裝置都不在線上。插上 USB，或確認手機跟電腦在同一個 WiFi。');
+  } catch (error) {
+    select.innerHTML = '<option value="">tunneld 未啟動</option>';
+    toast(error.message);
+  }
+}
+$('refreshBtn').onclick = refreshDevices;
+$('connectBtn').onclick = async () => {
+  const udid = $('deviceSelect').value;
+  if (!udid) { toast('先選一台裝置。'); return; }
+  try { await api('/api/connect', { udid }); } catch (error) { toast(error.message); }
+};
+$('disconnectBtn').onclick = () => api('/api/disconnect').catch((e) => toast(e.message));
+$('mountBtn').onclick = async () => {
+  try { await api('/api/mount'); toast('DDI 掛載完成。'); }
+  catch (error) { toast(error.message); }
+};
+
+// ---- live status ---------------------------------------------------------
+
+const STATE_TEXT = {
+  disconnected: '未連線', connecting: '連線中', connected: '已連線',
+  reconnecting: '重連中', error: '錯誤',
+};
+
+function render(snapshot) {
+  const session = snapshot.session;
+  const route = snapshot.route;
+
+  $('stateDot').className = 'dot ' + session.state;
+  $('stateText').textContent = STATE_TEXT[session.state] || session.state;
+  $('deviceMeta').textContent = session.deviceName
+    ? `${session.deviceName} · iOS ${session.iosVersion}` : '';
+  $('statsMeta').innerHTML = session.error
+    ? `<span style="color:var(--bad)">${session.error}</span>`
+    : `寫入 <b>${session.writes}</b> · 重連 <b>${session.reconnects}</b>`;
+
+  if (session.lat !== null && session.lon !== null) {
+    state.lastPosition = { lat: session.lat, lon: session.lon };
+    const latlng = [session.lat, session.lon];
+    ghost.setLatLng(latlng);
+    if (!ghostOnMap) { ghost.addTo(map); ghostOnMap = true; }
+    $('posMeta').innerHTML = `<b>${session.lat.toFixed(6)}, ${session.lon.toFixed(6)}</b>`
+      + (route.running ? ` · 航向 <b>${Math.round(session.heading)}°</b>` : '');
+  } else if (ghostOnMap) {
+    map.removeLayer(ghost);
+    ghostOnMap = false;
+    state.lastPosition = null;
+    $('posMeta').textContent = '—';
+  }
+
+  state.running = route.running;
+  state.paused = route.paused;
+  $('playBtn').textContent = route.paused ? '繼續' : '開始';
+  $('playBtn').disabled = route.running && !route.paused;
+  $('pauseBtn').disabled = !route.running || route.paused;
+  $('stopBtn').disabled = !route.running;
+
+  if (!state.seeking) seek.value = route.progress;
+  $('progressBar').style.width = (route.progress * 100).toFixed(1) + '%';
+  $('progressText').textContent = `${Math.round(route.distanceM)} / ${Math.round(route.totalM)} m`;
+  $('etaText').textContent = route.etaSeconds === null
+    ? '—'
+    : new Date(route.etaSeconds * 1000).toISOString().substring(11, 19);
+}
+
+function connectSocket() {
+  const socket = new WebSocket(`ws://${location.host}/ws`);
+  socket.onmessage = (event) => render(JSON.parse(event.data));
+  socket.onclose = () => setTimeout(connectSocket, 1000);
+}
+
+setMode('teleport');
+setSpeed(5, false);
+connectSocket();
+refreshDevices();
+</script>
+</body>
+</html>

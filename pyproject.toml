@@ -1,0 +1,42 @@
+[project]
+name = "sesame"
+version = "0.1.0"
+description = "iOS location simulation with a persistent DVT session and constant-speed route playback"
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "ShingHanHuang", email = "shuang85@usfca.edu" }]
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "pymobiledevice3>=11.1.5",
+    "uvicorn[standard]>=0.32",
+]
+
+[project.scripts]
+sesame = "sesame.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["sesame"]
+
+
+[dependency-groups]
+dev = [
+    "pillow>=11",
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.7",
+]
+
+[tool.ruff]
+line-length = 110
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
