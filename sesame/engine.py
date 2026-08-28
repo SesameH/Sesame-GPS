@@ -124,7 +124,9 @@ def transport_of(interface: str | None) -> str:
         return "usb" if interface.rsplit("-", 1)[-1].lower() == "usb" else "wifi"
     if interface.startswith("mobdev2-"):
         return "wifi"
-    if ":" in interface:
+    # Link-local is what the USB CDC-NCM interface uses. Any other IPv6 is a
+    # routable address the device only has because it is on the network.
+    if interface.lower().startswith("fe80:"):
         return "usb"
     return "wifi"
 
@@ -288,6 +290,14 @@ async def diagnose_wifi() -> dict:
         "reachableUdids": sorted(reachable),
         "tunnelCount": tunnels,
     }
+
+    if tunnels:
+        return {
+            **detail,
+            "ok": True,
+            "reason": None,
+            "actions": [],
+        }
 
     if reachable and tunnels == 0:
         return {

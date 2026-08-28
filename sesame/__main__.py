@@ -277,6 +277,12 @@ def doctor() -> int:
     if tunnels is not None:
         print(f"· tunneld 目前持有 {tunnels} 個 tunnel")
 
+    if tunnels:
+        # Several paths can produce a tunnel; the one that did is not worth
+        # auditing further, and the mobdev2 MAC check below would only confuse.
+        print("✓ WiFi 探索正常運作")
+        return 1 if problems else 0
+
     stored = stored_wifi_macs()
     advertised = asyncio.run(advertised_wifi_macs(4.0))
     reachable = asyncio.run(discoverable_udids())

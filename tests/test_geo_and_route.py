@@ -156,8 +156,10 @@ def test_device_name_falls_back_to_model_then_udid():
         ("usbmux-00008130-001A2B3C-USB", "usb"),
         ("usbmux-00008130-001A2B3C-Network", "wifi"),
         ("mobdev2-00008130-001A2B3C-192.168.1.42", "wifi"),
-        ("fdf5:3c8e:1a2b::1", "usb"),
         ("fe80::1c4d:aeff:fe12:3456%en5", "usb"),
+        # A routable address exists only because the device is on the network.
+        ("2601:647:4000:20d0:8de:249f:1232:ebd8", "wifi"),
+        ("10.0.0.231", "wifi"),
         ("Peters-iPhone.local", "wifi"),
         (None, "unknown"),
     ],
@@ -326,7 +328,8 @@ def offline_network(monkeypatch):
 
     monkeypatch.setattr(engine, "advertised_wifi_macs", lambda timeout=3.0: nothing())
     monkeypatch.setattr(engine, "discoverable_udids", lambda timeout=4.0: nothing())
-    monkeypatch.setattr(engine, "tunneld_tunnel_count", lambda: 1)
+    # Diagnosis only runs when nothing is working, so no tunnels is the baseline.
+    monkeypatch.setattr(engine, "tunneld_tunnel_count", lambda: 0)
     return monkeypatch
 
 
@@ -459,3 +462,19 @@ def test_tunneld_tunnel_count_sums_every_interface(monkeypatch):
     # One device advertised on two interfaces still counts as two tunnels.
     monkeypatch.setattr(api, "_list_tunnels", lambda: {"UDID-1": [{}, {}], "UDID-2": [{}]})
     assert engine.tunneld_tunnel_count() == 3
+
+
+async def test_diagnose_is_satisfied_by_a_working_tunnel(offline_network):
+    # Several paths can produce a tunnel. Once one has, auditing the mobdev2
+    # MAC is noise: it reports a fault for a route that is not being used.
+    offline_network.setattr(engine, "stored_wifi_macs", lambda: {"60:57:c8:92:6f:72": "UDID-1"})
+
+    async def advertising():
+        return {"0e:98:d2:bb:d3:15"}
+
+    offline_network.setattr(engine, "advertised_wifi_macs", lambda timeout=3.0: advertising())
+    offline_network.setattr(engine, "tunneld_tunnel_count", lambda: 1)
+
+    result = await engine.diagnose_wifi()
+    assert result["ok"] is True
+    assert result["reason"] is None
