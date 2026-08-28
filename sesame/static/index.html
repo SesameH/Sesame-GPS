@@ -86,6 +86,9 @@
       <button id="mountBtn">掛載 DDI</button>
       <button id="disconnectBtn" class="danger">斷線</button>
     </div>
+    <div class="row">
+      <button id="pairBtn">USB 配對（之後 WiFi 才找得到）</button>
+    </div>
     <div>
       <span class="pill"><span id="stateDot" class="dot"></span><span id="stateText">未連線</span></span>
     </div>
@@ -632,6 +635,24 @@ $('connectBtn').onclick = async () => {
   try { await api('/api/connect', { udid }); } catch (error) { toast(error.message); }
 };
 $('disconnectBtn').onclick = () => api('/api/disconnect').catch((e) => toast(e.message));
+$('pairBtn').onclick = async () => {
+  const button = $('pairBtn');
+  button.disabled = true;
+  button.textContent = '配對中…看手機螢幕';
+  try {
+    const data = await api('/api/pair');
+    const macs = data.paired.map((entry) => entry.wifiMac).join(', ');
+    toast(`配對完成（WiFi MAC ${macs}）。可以拔線了。`);
+    canDiscoverOverWifi = true;
+    refreshDevices();
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = 'USB 配對（之後 WiFi 才找得到）';
+  }
+};
+
 $('mountBtn').onclick = async () => {
   try { await api('/api/mount'); toast('DDI 掛載完成。'); }
   catch (error) { toast(error.message); }

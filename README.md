@@ -188,7 +188,7 @@ The device list comes from the tunnel daemon and is labelled by how each device 
 | `USB` | usbmuxd over the cable, or a USB CDC-NCM interface | Cable attached |
 | `WiFi` | mobdev2 (Bonjour lookup of paired devices), a usbmux network device, or RemotePairing | Previously paired + same network |
 
-**For Wi-Fi discovery, pair once over USB:**
+**For Wi-Fi discovery, pair once over USB** — press **USB 配對** in the interface, or:
 
 ```bash
 sesame pair
@@ -294,6 +294,7 @@ The interface is a client of this; you can drive it yourself.
 | GET | `/api/status` | Current session and route state |
 | POST | `/api/connect` | `{"udid": "..."}` |
 | POST | `/api/disconnect` | |
+| POST | `/api/pair` | Write the pairing record Wi-Fi discovery needs, from a device on the cable |
 | POST | `/api/mount` | Mount the Developer Disk Image |
 | POST | `/api/location` | `{"lat": …, "lon": …}` — single point |
 | POST | `/api/clear` | Hand GPS back to the device |

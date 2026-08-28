@@ -94,3 +94,38 @@ def test_devices_reports_whether_wifi_discovery_is_possible(monkeypatch):
     monkeypatch.setattr(server_module, "has_pair_record", lambda: True)
     with TestClient(create_app()) as client:
         assert client.get("/api/devices").json()["canDiscoverOverWifi"] is True
+
+
+def test_pair_endpoint_reports_a_missing_cable(monkeypatch):
+    from sesame import engine
+
+    async def no_cable():
+        raise engine.PairingError("沒有偵測到用 USB 連著的裝置。")
+
+    monkeypatch.setattr(server_module, "pair_over_usb", no_cable)
+    with TestClient(create_app()) as client:
+        response = client.post("/api/pair")
+    # A user-fixable situation, not a server fault.
+    assert response.status_code == 409
+    assert "USB" in response.json()["detail"]
+
+
+def test_pair_endpoint_returns_the_written_records(monkeypatch):
+    async def paired():
+        return [{"udid": "UDID-1", "wifiMac": "0e:98:d2:bb:d3:15", "record": "/tmp/x.plist"}]
+
+    monkeypatch.setattr(server_module, "pair_over_usb", paired)
+    with TestClient(create_app()) as client:
+        body = client.post("/api/pair").json()
+    assert body["paired"][0]["wifiMac"] == "0e:98:d2:bb:d3:15"
+
+
+def test_pair_endpoint_surfaces_an_unexpected_failure(monkeypatch):
+    async def broken():
+        raise ValueError("device went away")
+
+    monkeypatch.setattr(server_module, "pair_over_usb", broken)
+    with TestClient(create_app()) as client:
+        response = client.post("/api/pair")
+    assert response.status_code == 502
+    assert "ValueError" in response.json()["detail"]

@@ -225,6 +225,54 @@ async def advertised_wifi_macs(timeout: float = 3.0) -> set[str]:
     return found
 
 
+class PairingError(RuntimeError):
+    """Pairing could not produce a record Wi-Fi discovery can use."""
+
+
+async def pair_over_usb() -> list[dict]:
+    """Write a Wi-Fi-capable pairing record for every device on the cable.
+
+    A device trusted through Finder is already paired, and that record lives
+    with usbmuxd. Connecting over USB loads it but does not write it to our own
+    cache folder -- the only place Wi-Fi discovery looks. So the usual case is
+    not pairing at all, it is copying a record we already have to where it can
+    be used. Pairing afresh is the fallback for a record carrying no Wi-Fi MAC,
+    since one built here always does.
+
+    :raises PairingError: no device on the cable, or the record still lacks a
+        Wi-Fi MAC afterwards.
+    """
+    import plistlib
+
+    from pymobiledevice3.lockdown import create_using_usbmux
+    from pymobiledevice3.usbmux import list_devices
+
+    devices = [device for device in await list_devices() if device.connection_type == "USB"]
+    if not devices:
+        raise PairingError(
+            "沒有偵測到用 USB 連著的裝置。配對必須走傳輸線 —— 這正是之後 WiFi 才找得到它的原因。"
+        )
+
+    results = []
+    for device in devices:
+        lockdown = await create_using_usbmux(serial=device.serial)
+        async with lockdown:
+            record = lockdown.pair_record
+            if record is None or not record.get("WiFiMACAddress"):
+                # Needs the trust dialog on the device.
+                await lockdown.pair()
+            await lockdown.save_pair_record()
+
+        written = pair_record_folder() / f"{device.serial}.plist"
+        if not written.exists():
+            raise PairingError(f"配對後仍找不到記錄檔：{written}")
+        mac = plistlib.loads(written.read_bytes()).get("WiFiMACAddress")
+        if not mac:
+            raise PairingError(f"記錄寫好了但沒有 WiFiMACAddress，WiFi 探索仍然無法運作：{written}")
+        results.append({"udid": device.serial, "wifiMac": mac, "record": str(written)})
+    return results
+
+
 # -- remembered devices ----------------------------------------------------
 
 STORE_PATH = FilePath.home() / ".sesame" / "devices.json"

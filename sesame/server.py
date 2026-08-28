@@ -13,7 +13,14 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from sesame.engine import DeviceSession, RouteRunner, has_pair_record, list_devices
+from sesame.engine import (
+    DeviceSession,
+    PairingError,
+    RouteRunner,
+    has_pair_record,
+    list_devices,
+    pair_over_usb,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +159,16 @@ def create_app(on_idle: Callable[[], None] | None = None) -> FastAPI:
         await session.disconnect()
         await publish()
         return snapshot()
+
+    @app.post("/api/pair")
+    async def pair() -> dict:
+        """Pair over USB so the device can be found over Wi-Fi later."""
+        try:
+            return {"paired": await pair_over_usb()}
+        except PairingError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except Exception as error:
+            raise HTTPException(status_code=502, detail=f"{type(error).__name__}: {error}") from error
 
     @app.post("/api/mount")
     async def mount() -> dict:

@@ -255,60 +255,26 @@ def doctor() -> int:
 
 
 def pair() -> int:
-    """Make sure a Wi-Fi-capable pairing record exists on disk.
-
-    A device trusted through Finder is already paired, and that record lives
-    with usbmuxd. Connecting over USB loads it but does not write it to our own
-    cache folder -- which is the only place Wi-Fi discovery looks. So the usual
-    case is not pairing at all, it is copying the record we already have to
-    where it can be used. Pairing afresh is the fallback for a record that
-    carries no Wi-Fi MAC, since one built here always does.
-    """
+    """Write the pairing record Wi-Fi discovery needs, from a device on the cable."""
     import asyncio
-    import plistlib
 
-    from pymobiledevice3.lockdown import create_using_usbmux
-    from pymobiledevice3.usbmux import list_devices
-
-    from sesame.engine import pair_record_folder
-
-    async def pair_one(serial: str) -> bool:
-        lockdown = await create_using_usbmux(serial=serial)
-        async with lockdown:
-            if lockdown.pair_record is None:
-                print("尚未配對。請看手機螢幕上的「信任這台電腦」…", flush=True)
-                await lockdown.pair()
-            elif not lockdown.pair_record.get("WiFiMACAddress"):
-                print("既有記錄沒有 WiFi MAC，重新配對…請看手機螢幕。", flush=True)
-                await lockdown.pair()
-            await lockdown.save_pair_record()
-
-        written = pair_record_folder() / f"{serial}.plist"
-        if not written.exists():
-            print(f"配對後仍找不到 {written}", file=sys.stderr)
-            return False
-        mac = plistlib.loads(written.read_bytes()).get("WiFiMACAddress")
-        if not mac:
-            print(f"記錄寫好了但沒有 WiFiMACAddress，WiFi 探索仍然無法運作：{written}", file=sys.stderr)
-            return False
-        print(f"✓ {serial}\n  記錄：{written}\n  WiFi MAC：{mac}", flush=True)
-        return True
-
-    async def run() -> int:
-        devices = [d for d in await list_devices() if d.connection_type == "USB"]
-        if not devices:
-            print(
-                "沒有偵測到用 USB 連著的裝置。\n配對必須走傳輸線 —— 這正是之後 WiFi 才找得到它的原因。",
-                file=sys.stderr,
-            )
-            return 1
-        return 0 if all([await pair_one(d.serial) for d in devices]) else 1
+    from sesame.engine import PairingError, pair_over_usb
 
     try:
-        return asyncio.run(run())
+        results = asyncio.run(pair_over_usb())
+    except PairingError as error:
+        print(error, file=sys.stderr)
+        return 1
     except Exception as error:
         print(f"配對失敗：{type(error).__name__}: {error}", file=sys.stderr)
         return 1
+
+    for result in results:
+        print(f"✓ {result['udid']}")
+        print(f"  記錄：{result['record']}")
+        print(f"  WiFi MAC：{result['wifiMac']}")
+    print("可以拔線了。跑 sesame doctor 確認。")
+    return 0
 
 
 # -- .app bundle -----------------------------------------------------------
