@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from sesame import engine
+from sesame import engine, library
 
 
 class FakeSimulation:
@@ -63,6 +63,14 @@ class FakeRsd:
 
     async def close(self):
         self.closed += 1
+
+
+@pytest.fixture(autouse=True)
+def route_library(tmp_path, monkeypatch):
+    """A scratch saved-route file, so no test can touch the real library."""
+    path = tmp_path / "routes.json"
+    monkeypatch.setattr(library, "LIBRARY_PATH", path)
+    return path
 
 
 @pytest.fixture

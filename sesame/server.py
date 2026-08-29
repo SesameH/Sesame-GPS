@@ -23,6 +23,13 @@ from sesame.engine import (
     list_devices,
     pair_over_usb,
 )
+from sesame.library import (
+    LibraryError,
+    delete_route,
+    load_routes,
+    rename_route,
+    save_route,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +78,15 @@ class RouteBody(BaseModel):
     speed_kmh: float = Field(default=5.0, gt=0, le=1000)
     loop: bool = False
     jitter_m: float = Field(default=0.0, ge=0, le=50)
+
+
+class SaveRouteBody(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    points: list[tuple[float, float]] = Field(min_length=2)
+
+
+class RenameRouteBody(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
 
 
 class SpeedBody(BaseModel):
@@ -262,6 +278,30 @@ def create_app(on_idle: Callable[[], None] | None = None) -> FastAPI:
         await publish()
         return snapshot()
 
+    # -- saved routes ------------------------------------------------------
+    # Drawing is offline work, so none of these need a connected device. Each
+    # one answers with the whole library, which is what the picker draws from.
+
+    @app.get("/api/routes")
+    async def list_saved_routes() -> dict:
+        return {"routes": load_routes()}
+
+    @app.post("/api/routes")
+    async def create_saved_route(body: SaveRouteBody) -> dict:
+        points = [[latitude, longitude] for latitude, longitude in body.points]
+        saved = _library(lambda: save_route(body.name, points))
+        return {"route": saved, "routes": load_routes()}
+
+    @app.patch("/api/routes/{route_id}")
+    async def rename_saved_route(route_id: str, body: RenameRouteBody) -> dict:
+        renamed = _library(lambda: rename_route(route_id, body.name))
+        return {"route": renamed, "routes": load_routes()}
+
+    @app.delete("/api/routes/{route_id}")
+    async def remove_saved_route(route_id: str) -> dict:
+        _library(lambda: delete_route(route_id))
+        return {"routes": load_routes()}
+
     @app.websocket("/ws")
     async def websocket(connection: WebSocket) -> None:
         await connection.accept()
@@ -297,6 +337,20 @@ def create_app(on_idle: Callable[[], None] | None = None) -> FastAPI:
             if broadcaster.empty:
                 logger.info("no browser for %.0fs, shutting down", IDLE_GRACE_SECONDS)
                 on_idle()
+
+    def _library(action: Callable[[], object]) -> object:
+        """Run a library call, phrasing its two failure shapes for the browser."""
+        try:
+            return action()
+        except LibraryError as error:
+            # The code lets the interface phrase this in the reader's language.
+            raise HTTPException(
+                status_code=409, detail={"code": error.code, "message": str(error)}
+            ) from error
+        except OSError as error:
+            raise HTTPException(
+                status_code=500, detail=f"could not write the route library: {error}"
+            ) from error
 
     def _require_connected() -> None:
         if session.status.udid is None:
