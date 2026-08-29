@@ -299,3 +299,61 @@ def test_a_lost_session_stops_the_route(client, device):
 
     # A route still reporting progress against a dead session is a lie.
     raise AssertionError(f"route never stopped: {client.get('/api/status').json()}")
+
+
+# -- saved routes ----------------------------------------------------------
+
+
+def save(client, name, points=None):
+    response = client.post(
+        "/api/routes", json={"name": name, "points": points or ROUTE["points"]}
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_a_saved_route_is_listed_without_a_device(client):
+    # Drawing is offline work; saving must not need a connected phone.
+    body = save(client, "Morning loop")
+    assert body["route"]["name"] == "Morning loop"
+    assert body["routes"] == [body["route"]]
+    assert client.get("/api/routes").json()["routes"] == body["routes"]
+
+
+def test_a_saved_route_can_be_played(client):
+    points = save(client, "Morning loop")["route"]["points"]
+    connect(client)
+    assert client.post("/api/route/start", json={"points": points}).status_code == 200
+
+
+def test_saving_needs_two_points(client):
+    response = client.post("/api/routes", json={"name": "one", "points": [[1.0, 2.0]]})
+    assert response.status_code == 422
+
+
+def test_renaming_a_save(client):
+    saved = save(client, "typo")["route"]
+    body = client.patch(f"/api/routes/{saved['id']}", json={"name": "Morning loop"}).json()
+    assert body["route"]["name"] == "Morning loop"
+    assert body["routes"][0]["points"] == saved["points"]
+
+
+def test_a_clashing_rename_answers_with_a_code_the_interface_can_phrase(client):
+    save(client, "Morning loop")
+    other = save(client, "Evening loop")["route"]
+    response = client.patch(f"/api/routes/{other['id']}", json={"name": "Morning loop"})
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "name-taken"
+
+
+def test_acting_on_a_save_that_is_gone(client):
+    response = client.delete("/api/routes/nope")
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "not-found"
+
+
+def test_deleting_a_save(client):
+    saved = save(client, "Morning loop")["route"]
+    save(client, "Evening loop")
+    body = client.delete(f"/api/routes/{saved['id']}").json()
+    assert [route["name"] for route in body["routes"]] == ["Evening loop"]

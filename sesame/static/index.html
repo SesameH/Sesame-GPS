@@ -61,6 +61,11 @@
            padding: 8px 12px; border-radius: 8px; background: #3a2226; border: 1px solid #5a2f34;
            color: #ffb4b0; font-size: 12px; display: none; }
   .leaflet-container { background: #0c0e13; }
+  /* Arrow while pointing so vertices are easy to place; hand only while dragging. */
+  .leaflet-grab { cursor: default; }
+  .leaflet-grab:active,
+  .leaflet-dragging .leaflet-grab,
+  .leaflet-dragging .leaflet-grab .leaflet-interactive { cursor: grabbing; }
   .leaflet-control-layers, .leaflet-bar a {
     background: var(--panel); color: var(--text); border-color: var(--line); }
   .leaflet-bar a:hover { background: #2c3348; color: var(--text); }
@@ -162,6 +167,21 @@
   </section>
 
   <section class="stack">
+    <h2 data-i18n="saved"></h2>
+    <input type="text" id="saveName" data-i18n-ph="saveName">
+    <div class="row">
+      <button id="saveRouteBtn" class="primary" data-i18n="saveRoute"></button>
+      <button id="renameRouteBtn" data-i18n="renameRoute"></button>
+    </div>
+    <select id="savedSelect"></select>
+    <div class="row">
+      <button id="loadRouteBtn" class="primary" data-i18n="loadRoute"></button>
+      <button id="deleteRouteBtn" class="danger" data-i18n="deleteRoute"></button>
+    </div>
+    <div class="hint" data-i18n="savedHint"></div>
+  </section>
+
+  <section class="stack">
     <h2 data-i18n="currentPosition"></h2>
     <div class="meta" id="posMeta">—</div>
     <button id="clearLocBtn" data-i18n="restoreGps"></button>
@@ -195,6 +215,20 @@ const STRINGS = {
     speed: 'Speed', walk: 'Walk', jog: 'Jog', bike: 'Bike', drive: 'Drive',
     loop: 'Loop', jitter: 'Jitter', on: 'on', off: 'off',
     start: 'Start', resumeRoute: 'Resume', pause: 'Pause', stop: 'Stop', remaining: 'remaining',
+    saved: 'Saved routes', saveName: 'Morning loop', saveRoute: 'Save route',
+    renameRoute: 'Rename', loadRoute: 'Load', deleteRoute: 'Delete',
+    savedHint: 'Kept on this computer, not in the browser. Picking a save fills the name box — '
+      + 'edit it and press Rename. Saving over a name replaces that save.',
+    noSaves: 'No saved routes', needName: 'Name the save first.', pickSave: 'Pick a save first.',
+    confirmOverwrite: (name) => `Replace the save "${name}"?`,
+    confirmReplaceDrawing: 'Replace the route drawn on the map?',
+    confirmDeleteSave: (name) => `Delete the save "${name}"?`,
+    routeSaved: (name) => `Saved as "${name}".`,
+    saveErr: {
+      'empty-name': 'A save needs a name.',
+      'name-taken': 'Another save already has that name.',
+      'not-found': 'That save is gone. The list has been refreshed.',
+    },
     currentPosition: 'Current position', restoreGps: 'Restore real GPS',
     layerDark: 'Dark', layerStreets: 'Streets', layerSatellite: 'Satellite',
     stateDisconnected: 'Disconnected', stateConnecting: 'Connecting',
@@ -256,6 +290,20 @@ const STRINGS = {
     speed: '速度', walk: '步行', jog: '慢跑', bike: '單車', drive: '開車',
     loop: '循環', jitter: '抖動', on: '開', off: '關',
     start: '開始', resumeRoute: '繼續', pause: '暫停', stop: '停止', remaining: '剩餘',
+    saved: '路線存檔', saveName: '晨跑路線', saveRoute: '儲存路線',
+    renameRoute: '重新命名', loadRoute: '載入', deleteRoute: '刪除',
+    savedHint: '存在這台電腦上，不是瀏覽器裡。點選存檔會把名字帶進上面的輸入框，改完按「重新命名」。'
+      + '用同一個名字儲存會覆蓋那個存檔。',
+    noSaves: '沒有存檔', needName: '先輸入存檔名稱。', pickSave: '先選一個存檔。',
+    confirmOverwrite: (name) => `覆蓋存檔「${name}」？`,
+    confirmReplaceDrawing: '要蓋掉地圖上目前畫的路線嗎？',
+    confirmDeleteSave: (name) => `刪除存檔「${name}」？`,
+    routeSaved: (name) => `已存成「${name}」。`,
+    saveErr: {
+      'empty-name': '存檔要有名字。',
+      'name-taken': '已經有同名的存檔了。',
+      'not-found': '這個存檔不見了，清單已經重新整理。',
+    },
     currentPosition: '目前位置', restoreGps: '還原真實 GPS',
     layerDark: '深色', layerStreets: '街道', layerSatellite: '衛星',
     stateDisconnected: '未連線', stateConnecting: '連線中',
@@ -317,6 +365,7 @@ function applyLanguage() {
   // Anything whose text depends on state has to be rebuilt, not just swapped.
   setMode(state.mode);
   refreshToggleLabels();
+  fillSavedSelect();
   if (lastSnapshot) render(lastSnapshot);
 }
 
@@ -396,10 +445,10 @@ function toast(message) {
   toast._timer = setTimeout(() => { box.style.display = 'none'; }, 6000);
 }
 
-async function api(path, body) {
+async function api(path, body, method = 'POST') {
   const options = body === undefined
-    ? { method: 'POST' }
-    : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
+    ? { method }
+    : { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
   const response = await fetch(path, options);
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -579,6 +628,113 @@ seek.addEventListener('change', async () => {
   catch (error) { toast(error.message); }
   finally { state.seeking = false; }
 });
+
+// ---- saved routes --------------------------------------------------------
+// The library lives on the server, so a save survives a cleared browser and
+// reads the same in every window. Names are the identity the user sees:
+// picking one fills the name box, and saving over a name replaces that save.
+
+let savedRoutes = [];
+
+function fillSavedSelect() {
+  const select = $('savedSelect');
+  const previous = select.value;
+  select.innerHTML = '';
+  if (!savedRoutes.length) {
+    const empty = document.createElement('option');
+    empty.value = '';
+    empty.textContent = t('noSaves');
+    select.appendChild(empty);
+    return;
+  }
+  for (const route of savedRoutes) {
+    const option = document.createElement('option');
+    option.value = route.id;
+    // The point count travels untranslated, so the label needs no rebuilding.
+    option.textContent = `${route.name} · ${route.points.length}`;
+    select.appendChild(option);
+  }
+  if (previous && savedRoutes.some((route) => route.id === previous)) select.value = previous;
+}
+
+function selectedSave() {
+  return savedRoutes.find((route) => route.id === $('savedSelect').value) || null;
+}
+
+function adoptLibrary(data) {
+  savedRoutes = data.routes;
+  fillSavedSelect();
+  if (data.route) $('savedSelect').value = data.route.id;
+}
+
+async function refreshSavedRoutes() {
+  try {
+    const response = await fetch('/api/routes');
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || response.statusText);
+    adoptLibrary(data);
+  } catch (error) { toast(error.message); }
+}
+
+// A save the server no longer has leaves the picker showing something gone,
+// so every failure ends with the list back in step with the server.
+async function saveFailed(error) {
+  toast(t('saveErr')[error.code] || error.message);
+  if (error.code === 'not-found') await refreshSavedRoutes();
+}
+
+$('savedSelect').onchange = () => {
+  const route = selectedSave();
+  if (route) $('saveName').value = route.name;
+};
+
+$('saveRouteBtn').onclick = async () => {
+  if (state.points.length < 2) { toast(t('needTwoPoints')); return; }
+  const name = $('saveName').value.trim();
+  if (!name) { toast(t('needName')); return; }
+  if (savedRoutes.some((route) => route.name === name)
+      && !confirm(t('confirmOverwrite')(name))) return;
+  try {
+    const data = await api('/api/routes', {
+      name, points: state.points.map((point) => [point.lat, point.lng]),
+    });
+    adoptLibrary(data);
+    toast(t('routeSaved')(data.route.name));
+  } catch (error) { await saveFailed(error); }
+};
+
+$('loadRouteBtn').onclick = () => {
+  const route = selectedSave();
+  if (!route) { toast(t('pickSave')); return; }
+  // Loading discards whatever is drawn, and there is no undo for that.
+  if (state.points.length && !confirm(t('confirmReplaceDrawing'))) return;
+  clearRoute();
+  for (const [latitude, longitude] of route.points) {
+    makeVertex(L.latLng(latitude, longitude), state.points.length);
+  }
+  redraw();
+  $('saveName').value = route.name;
+  setMode('draw');
+  map.fitBounds(line.getBounds(), { padding: [40, 40] });
+};
+
+$('renameRouteBtn').onclick = async () => {
+  const route = selectedSave();
+  if (!route) { toast(t('pickSave')); return; }
+  const name = $('saveName').value.trim();
+  if (!name) { toast(t('needName')); return; }
+  if (name === route.name) return;
+  try { adoptLibrary(await api(`/api/routes/${route.id}`, { name }, 'PATCH')); }
+  catch (error) { await saveFailed(error); }
+};
+
+$('deleteRouteBtn').onclick = async () => {
+  const route = selectedSave();
+  if (!route) { toast(t('pickSave')); return; }
+  if (!confirm(t('confirmDeleteSave')(route.name))) return;
+  try { adoptLibrary(await api(`/api/routes/${route.id}`, undefined, 'DELETE')); }
+  catch (error) { await saveFailed(error); }
+};
 
 // ---- coordinate input ----------------------------------------------------
 // One parser behind both the search box and the lat/lon fields, so anything
@@ -919,6 +1075,7 @@ applyLanguage();
 labelLayers();
 connectSocket();
 refreshDevices();
+refreshSavedRoutes();
 </script>
 </body>
 </html>

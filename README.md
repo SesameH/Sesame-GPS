@@ -147,6 +147,16 @@ Set a speed and press **Start**:
 
 The device reports the speed you asked for whether you drew two points or two thousand.
 
+### Saving a route
+
+Under **Saved routes**, name the route and press **Save route**. Picking a save fills the name
+box, so **Rename** changes it and saving under a name that already exists replaces that save.
+**Load** puts the route back on the map, ready to edit or start; whatever was drawn is
+replaced, so it asks first.
+
+Saves live in `~/.sesame/routes.json`, not in the browser — they survive a cleared cache and
+read the same in every window.
+
 ## Device discovery
 
 Devices are labelled by how they were found:
