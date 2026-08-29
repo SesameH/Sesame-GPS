@@ -61,6 +61,11 @@
            padding: 8px 12px; border-radius: 8px; background: #3a2226; border: 1px solid #5a2f34;
            color: #ffb4b0; font-size: 12px; display: none; }
   .leaflet-container { background: #0c0e13; }
+  /* Arrow while pointing so vertices are easy to place; hand only while dragging. */
+  .leaflet-grab { cursor: default; }
+  .leaflet-grab:active,
+  .leaflet-dragging .leaflet-grab,
+  .leaflet-dragging .leaflet-grab .leaflet-interactive { cursor: grabbing; }
   .leaflet-control-layers, .leaflet-bar a {
     background: var(--panel); color: var(--text); border-color: var(--line); }
   .leaflet-bar a:hover { background: #2c3348; color: var(--text); }
