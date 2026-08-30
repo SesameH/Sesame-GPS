@@ -430,6 +430,56 @@ def pair() -> int:
     return 0
 
 
+def setup(build_app: bool = True) -> int:
+    """Do everything a fresh machine needs, in one command.
+
+    Only the daemon install needs root, so that single step is re-run through
+    ``sudo`` rather than making the whole command privileged. ``sys.argv[0]``
+    is an absolute path, which matters because ``sudo`` resets ``PATH`` and
+    would not find the command by name.
+    """
+    import asyncio
+
+    from sesame.engine import PairingError, pair_over_usb
+
+    failures = 0
+
+    print("1/3  安裝 tunnel daemon 與看門狗（需要密碼）…", flush=True)
+    if os.geteuid() == 0:
+        code = daemon_install()
+    else:
+        code = subprocess.run(["sudo", sys.argv[0], "daemon", "install"], check=False).returncode
+    if code != 0:
+        failures += 1
+        print("     失敗。之後可以自己跑：sudo $(which sesame) daemon install", file=sys.stderr)
+
+    if build_app:
+        print("2/3  產生 Sesame.app…", flush=True)
+        destination = Path.home() / "Applications"
+        destination.mkdir(parents=True, exist_ok=True)
+        if app_build(destination, port=8765) != 0:
+            failures += 1
+    else:
+        print("2/3  跳過 .app", flush=True)
+
+    print("3/3  配對…", flush=True)
+    try:
+        for result in asyncio.run(pair_over_usb()):
+            print(f"     ✓ {result['udid']}  WiFi MAC {result['wifiMac']}")
+    except PairingError:
+        print("     沒有裝置插在 USB 上。之後插上線跑一次 sesame pair，WiFi 才找得到它。")
+    except Exception as error:
+        failures += 1
+        print(f"     配對失敗：{type(error).__name__}: {error}", file=sys.stderr)
+
+    print()
+    if failures:
+        print(f"完成，但有 {failures} 個步驟失敗。跑 sesame doctor 看細節。", file=sys.stderr)
+        return 1
+    print("好了。開 Sesame.app，或跑 sesame --open。")
+    return 0
+
+
 # -- .app bundle -----------------------------------------------------------
 
 APP_NAME = "Sesame"
@@ -788,6 +838,9 @@ def main() -> None:
     subparsers.add_parser("pair", help="用 USB 配對一次，之後 WiFi 才找得到裝置")
     subparsers.add_parser("doctor", help="檢查 WiFi 探索需要的每個環節")
 
+    setup_parser = subparsers.add_parser("setup", help="一次裝好：daemon、看門狗、.app，並配對")
+    setup_parser.add_argument("--no-app", dest="build_app", action="store_false", help="不要產生 .app")
+
     app_parser = subparsers.add_parser("app", help="產生可雙擊開啟的 .app")
     app_parser.add_argument("action", choices=["build"])
     app_parser.add_argument(
@@ -812,7 +865,7 @@ def main() -> None:
 
     # Bare `sesame --open` keeps working: fall through to the serve subcommand.
     argv = sys.argv[1:]
-    if not argv or argv[0] not in {"serve", "daemon", "app", "pair", "doctor", "-h", "--help"}:
+    if not argv or argv[0] not in {"serve", "daemon", "app", "pair", "doctor", "setup", "-h", "--help"}:
         argv = ["serve", *argv]
     args = parser.parse_args(argv)
 
@@ -821,6 +874,9 @@ def main() -> None:
 
     if args.command == "doctor":
         raise SystemExit(doctor())
+
+    if args.command == "setup":
+        raise SystemExit(setup(args.build_app))
 
     if args.command == "app":
         args.dest.mkdir(parents=True, exist_ok=True)

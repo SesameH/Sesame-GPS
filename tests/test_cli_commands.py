@@ -513,3 +513,78 @@ def test_tunneld_probe_gives_up_eventually(monkeypatch):
 
     assert cli.tunneld_is_up(attempts=2) is False
     assert len(attempts) == 2
+
+
+# -- setup -----------------------------------------------------------------
+
+
+@pytest.fixture
+def setup_world(monkeypatch, tmp_path):
+    from sesame import engine
+
+    calls = []
+    monkeypatch.setattr(cli.os, "geteuid", lambda: 501)
+    monkeypatch.setattr(
+        cli.subprocess,
+        "run",
+        lambda command, **kwargs: calls.append(command)
+        or subprocess.CompletedProcess(command, 0),
+    )
+    monkeypatch.setattr(cli, "app_build", lambda *a, **k: calls.append(["app_build"]) or 0)
+    monkeypatch.setattr(cli.Path, "home", classmethod(lambda cls: tmp_path))
+
+    async def paired():
+        return [{"udid": "UDID-1", "wifiMac": "60:57:c8:92:6f:72", "record": "/tmp/x"}]
+
+    monkeypatch.setattr(engine, "pair_over_usb", paired)
+    return monkeypatch, calls
+
+
+def test_setup_does_all_three_steps(setup_world, capsys):
+    _, calls = setup_world
+    assert cli.setup() == 0
+
+    # The daemon step is the only privileged one, so only it is re-run as root.
+    assert calls[0][:2] == ["sudo", cli.sys.argv[0]]
+    assert calls[0][2:] == ["daemon", "install"]
+    assert ["app_build"] in calls
+    assert "60:57:c8:92:6f:72" in capsys.readouterr().out
+
+
+def test_setup_does_not_re_escalate_when_already_root(setup_world):
+    monkeypatch, calls = setup_world
+    installed = []
+    monkeypatch.setattr(cli.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(cli, "daemon_install", lambda: installed.append(True) or 0)
+
+    assert cli.setup() == 0
+    assert installed == [True]
+    assert not any(command[0] == "sudo" for command in calls if command)
+
+
+def test_setup_can_skip_the_app(setup_world):
+    _, calls = setup_world
+    assert cli.setup(build_app=False) == 0
+    assert ["app_build"] not in calls
+
+
+def test_setup_survives_no_cable(setup_world, capsys):
+    monkeypatch, _ = setup_world
+    from sesame import engine
+
+    async def no_cable():
+        raise engine.PairingError("no-cable", "No device on USB.")
+
+    monkeypatch.setattr(engine, "pair_over_usb", no_cable)
+    # Nothing plugged in is normal, not a failure.
+    assert cli.setup() == 0
+    assert "sesame pair" in capsys.readouterr().out
+
+
+def test_setup_reports_a_failed_daemon_install(setup_world, capsys):
+    monkeypatch, _ = setup_world
+    monkeypatch.setattr(
+        cli.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess([], 1)
+    )
+    assert cli.setup() == 1
+    assert "daemon install" in capsys.readouterr().err

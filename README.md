@@ -64,6 +64,16 @@ suitable Python itself:
 uv tool install git+https://github.com/SesameH/Sesame-GPS.git
 ```
 
+## Set up
+
+```bash
+sesame setup
+```
+
+One command: installs the tunnel daemon and its watchdog (asking for your password once), builds
+`~/Applications/Sesame.app`, and pairs whatever is plugged in over USB. `--no-app` skips the
+bundle.
+
 ## Quick start
 
 ```bash
@@ -80,9 +90,9 @@ the interface on <http://127.0.0.1:8765>, and opens your browser.
 The interface is in English; the button in the top-left corner switches it to Traditional Chinese
 and remembers the choice.
 
-### Not being asked for a password every time
+### The daemon, on its own
 
-Install the tunnel daemon so it starts at boot:
+`sesame setup` does this for you. To manage it by hand:
 
 ```bash
 sudo $(which sesame) daemon install     # install
