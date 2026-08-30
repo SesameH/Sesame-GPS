@@ -92,6 +92,11 @@ sudo sesame daemon uninstall   # remove
 
 After this, `sesame` never touches `sudo`.
 
+This also installs a watchdog. The tunnel daemon can end up holding no tunnels while your device
+is plainly on the network, which otherwise needs `sudo sesame daemon restart` every time; the
+watchdog checks every two minutes and restarts it for you. `--no-watchdog` skips it, and it logs
+to `/var/log/sesame-watchdog.log`.
+
 To run the daemon yourself instead, pass `--no-tunneld`:
 
 ```bash
@@ -239,6 +244,9 @@ needs a few seconds; the interface retries for about thirty. If it persists, res
 ```bash
 sudo sesame daemon restart
 ```
+
+If you hit that more than once, install the daemon (above) — the watchdog it brings does this
+for you.
 
 **Mounting the DDI fails** — the first mount downloads an image from Apple, so it needs internet
 access. On iOS 17+ this must be redone after every device reboot.

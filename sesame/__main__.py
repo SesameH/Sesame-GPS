@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
+import contextlib
 import json
 import logging
 import math
@@ -18,18 +20,28 @@ import time
 import urllib.error
 import urllib.request
 import webbrowser
+from datetime import datetime
 from pathlib import Path
 
 import uvicorn
 from pymobiledevice3.tunneld.api import TUNNELD_DEFAULT_ADDRESS
 
 from sesame import __version__
-from sesame.engine import pair_record_folder
+from sesame.engine import discoverable_udids, pair_record_folder, tunneld_tunnel_count
 from sesame.server import create_app
 
 LAUNCHD_LABEL = "com.sesame.tunneld"
 LAUNCHD_PLIST = Path("/Library/LaunchDaemons") / f"{LAUNCHD_LABEL}.plist"
 LAUNCHD_LOG = "/var/log/sesame-tunneld.log"
+
+WATCHDOG_LABEL = "com.sesame.watchdog"
+WATCHDOG_PLIST = Path("/Library/LaunchDaemons") / f"{WATCHDOG_LABEL}.plist"
+WATCHDOG_LOG = "/var/log/sesame-watchdog.log"
+WATCHDOG_INTERVAL = 120
+# Restarting cannot help more often than the daemon takes to find a device, and
+# a tighter loop would just churn.
+WATCHDOG_COOLDOWN = 300
+WATCHDOG_STAMP = Path("/var/tmp/sesame-watchdog.stamp")
 
 TUNNELD_STARTUP_TIMEOUT = 30.0
 
@@ -131,8 +143,12 @@ def ensure_tunneld(gui_sudo: bool = False) -> bool:
 # -- launchd daemon --------------------------------------------------------
 
 
-def daemon_install() -> int:
-    """Install tunneld as a LaunchDaemon so it survives reboots."""
+def daemon_install(watchdog: bool = True) -> int:
+    """Install tunneld as a LaunchDaemon so it survives reboots.
+
+    :param watchdog: also install a second daemon that notices tunneld getting
+        stuck and restarts it, which otherwise needs a password every time.
+    """
     if os.geteuid() != 0:
         print(f"要 root。請跑：sudo {sys.argv[0]} daemon install", file=sys.stderr)
         return 1
@@ -162,6 +178,37 @@ def daemon_install() -> int:
         return result.returncode
 
     print(f"已安裝 {LAUNCHD_PLIST}。tunneld 現在開機就會自己跑，log 在 {LAUNCHD_LOG}。")
+
+    if not watchdog:
+        return 0
+    return _install_watchdog()
+
+
+def _install_watchdog() -> int:
+    executable = Path(sys.executable).parent / "sesame"
+    if not executable.exists():
+        print(f"找不到 {executable}，跳過看門狗。", file=sys.stderr)
+        return 1
+
+    plist = {
+        "Label": WATCHDOG_LABEL,
+        "ProgramArguments": [str(executable), "daemon", "watchdog"],
+        "RunAtLoad": True,
+        "StartInterval": WATCHDOG_INTERVAL,
+        "StandardOutPath": WATCHDOG_LOG,
+        "StandardErrorPath": WATCHDOG_LOG,
+    }
+    with WATCHDOG_PLIST.open("wb") as handle:
+        plistlib.dump(plist, handle)
+    WATCHDOG_PLIST.chmod(0o644)
+
+    subprocess.run(["launchctl", "bootout", f"system/{WATCHDOG_LABEL}"], capture_output=True, check=False)
+    result = subprocess.run(["launchctl", "bootstrap", "system", str(WATCHDOG_PLIST)], check=False)
+    if result.returncode != 0:
+        print(f"看門狗 bootstrap 失敗（代碼 {result.returncode}）。", file=sys.stderr)
+        return result.returncode
+
+    print(f"已安裝看門狗。每 {WATCHDOG_INTERVAL} 秒檢查一次，tunneld 卡住就自動重啟，log 在 {WATCHDOG_LOG}。")
     return 0
 
 
@@ -219,20 +266,57 @@ def daemon_restart() -> int:
     return 1
 
 
+def _restarted_recently() -> bool:
+    try:
+        age = time.time() - WATCHDOG_STAMP.stat().st_mtime
+    except OSError:
+        return False
+    return age < WATCHDOG_COOLDOWN
+
+
+def daemon_watchdog() -> int:
+    """One pass of the stuck-daemon check, run by launchd rather than by hand.
+
+    tunneld tries each address it discovers once and keeps the failed attempt,
+    so it never retries and can sit holding nothing while a device is plainly
+    reachable. Restarting is the only way out, and noticing needs to happen
+    without a person watching.
+    """
+    if not tunneld_is_up():
+        return 0  # KeepAlive covers a daemon that actually died
+    if tunneld_tunnel_count():
+        return 0  # working
+    if _restarted_recently():
+        return 0
+    if not asyncio.run(discoverable_udids()):
+        return 0  # nothing to reach, so nothing is wrong
+
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"{stamp} tunneld holds no tunnels with a device reachable; restarting", flush=True)
+    with contextlib.suppress(OSError):
+        WATCHDOG_STAMP.parent.mkdir(parents=True, exist_ok=True)
+        WATCHDOG_STAMP.touch()
+    return daemon_restart()
+
+
 def daemon_uninstall() -> int:
     if os.geteuid() != 0:
         print(f"要 root。請跑：sudo {sys.argv[0]} daemon uninstall", file=sys.stderr)
         return 1
 
-    subprocess.run(["launchctl", "bootout", f"system/{LAUNCHD_LABEL}"], capture_output=True, check=False)
-    LAUNCHD_PLIST.unlink(missing_ok=True)
-    print(f"已移除 {LAUNCHD_LABEL}。")
+    for label, plist in ((LAUNCHD_LABEL, LAUNCHD_PLIST), (WATCHDOG_LABEL, WATCHDOG_PLIST)):
+        subprocess.run(["launchctl", "bootout", f"system/{label}"], capture_output=True, check=False)
+        plist.unlink(missing_ok=True)
+    print(f"已移除 {LAUNCHD_LABEL} 與 {WATCHDOG_LABEL}。")
     return 0
 
 
 def daemon_status() -> int:
     installed = LAUNCHD_PLIST.exists()
     print(f"LaunchDaemon: {'已安裝' if installed else '未安裝'}（{LAUNCHD_PLIST}）")
+    print(
+        f"看門狗:       {'已安裝' if WATCHDOG_PLIST.exists() else '未安裝'}（每 {WATCHDOG_INTERVAL} 秒檢查）"
+    )
     print(
         f"tunneld:      {'有回應' if tunneld_is_up() else '沒有回應'}"
         f"（http://{TUNNELD_DEFAULT_ADDRESS[0]}:{TUNNELD_DEFAULT_ADDRESS[1]}）"
@@ -678,7 +762,15 @@ def main() -> None:
     serve_parser.add_argument("--verbose", action="store_true")
 
     daemon_parser = subparsers.add_parser("daemon", help="把 tunneld 裝成開機自動啟動的服務")
-    daemon_parser.add_argument("action", choices=["start", "restart", "install", "uninstall", "status"])
+    daemon_parser.add_argument(
+        "--no-watchdog",
+        dest="watchdog",
+        action="store_false",
+        help="install 時不要一併安裝看門狗",
+    )
+    daemon_parser.add_argument(
+        "action", choices=["start", "restart", "install", "uninstall", "status", "watchdog"]
+    )
 
     subparsers.add_parser("pair", help="用 USB 配對一次，之後 WiFi 才找得到裝置")
     subparsers.add_parser("doctor", help="檢查 WiFi 探索需要的每個環節")
@@ -726,7 +818,8 @@ def main() -> None:
             {
                 "start": daemon_start,
                 "restart": daemon_restart,
-                "install": daemon_install,
+                "watchdog": daemon_watchdog,
+                "install": lambda: daemon_install(args.watchdog),
                 "uninstall": daemon_uninstall,
                 "status": daemon_status,
             }[args.action]()

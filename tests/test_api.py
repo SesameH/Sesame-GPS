@@ -305,9 +305,7 @@ def test_a_lost_session_stops_the_route(client, device):
 
 
 def save(client, name, points=None):
-    response = client.post(
-        "/api/routes", json={"name": name, "points": points or ROUTE["points"]}
-    )
+    response = client.post("/api/routes", json={"name": name, "points": points or ROUTE["points"]})
     assert response.status_code == 200, response.text
     return response.json()
 

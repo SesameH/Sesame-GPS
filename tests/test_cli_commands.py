@@ -324,6 +324,7 @@ def _ticking(step=0.1):
         (["sesame", "daemon", "install"], "daemon:install"),
         (["sesame", "daemon", "uninstall"], "daemon:uninstall"),
         (["sesame", "daemon", "status"], "daemon:status"),
+        (["sesame", "daemon", "watchdog"], "daemon:watchdog"),
         (["sesame", "app", "build"], "app:build"),
     ],
 )
@@ -332,10 +333,11 @@ def test_main_dispatches_every_command(argv, expected, monkeypatch):
     reached = []
     monkeypatch.setattr(cli.sys, "argv", argv)
     monkeypatch.setattr(cli, "serve", lambda args: reached.append("serve") or 0)
+    monkeypatch.setattr(cli, "daemon_install", lambda *a: reached.append("daemon:install") or 0)
     monkeypatch.setattr(cli, "pair", lambda: reached.append("pair") or 0)
     monkeypatch.setattr(cli, "doctor", lambda: reached.append("doctor") or 0)
     monkeypatch.setattr(cli, "app_build", lambda *a, **k: reached.append("app:build") or 0)
-    for action in ("start", "restart", "install", "uninstall", "status"):
+    for action in ("start", "restart", "uninstall", "status", "watchdog"):
         monkeypatch.setattr(
             cli,
             f"daemon_{action}",
@@ -354,3 +356,121 @@ def test_main_rejects_an_unknown_daemon_action(monkeypatch):
     with pytest.raises(SystemExit) as exit_info:
         cli.main()
     assert exit_info.value.code == 2
+
+
+# -- watchdog --------------------------------------------------------------
+
+
+@pytest.fixture
+def watchdog_world(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "WATCHDOG_STAMP", tmp_path / "stamp")
+    monkeypatch.setattr(cli, "tunneld_is_up", lambda *a, **k: True)
+    monkeypatch.setattr(cli, "tunneld_tunnel_count", lambda: 0)
+
+    async def reachable():
+        return {"UDID-1"}
+
+    monkeypatch.setattr(cli, "discoverable_udids", lambda timeout=4.0: reachable())
+    restarts = []
+    monkeypatch.setattr(cli, "daemon_restart", lambda: restarts.append(True) or 0)
+    return monkeypatch, restarts
+
+
+def test_watchdog_restarts_a_stuck_daemon(watchdog_world):
+    _, restarts = watchdog_world
+    assert cli.daemon_watchdog() == 0
+    assert restarts == [True]
+
+
+def test_watchdog_leaves_a_working_daemon_alone(watchdog_world):
+    monkeypatch, restarts = watchdog_world
+    monkeypatch.setattr(cli, "tunneld_tunnel_count", lambda: 1)
+    assert cli.daemon_watchdog() == 0
+    assert restarts == []
+
+
+def test_watchdog_leaves_a_dead_daemon_to_launchd(watchdog_world):
+    monkeypatch, restarts = watchdog_world
+    monkeypatch.setattr(cli, "tunneld_is_up", lambda *a, **k: False)
+    # KeepAlive already restarts a daemon that exited; racing it would churn.
+    assert cli.daemon_watchdog() == 0
+    assert restarts == []
+
+
+def test_watchdog_does_nothing_with_no_device_around(watchdog_world):
+    monkeypatch, restarts = watchdog_world
+
+    async def nothing():
+        return set()
+
+    monkeypatch.setattr(cli, "discoverable_udids", lambda timeout=4.0: nothing())
+    # Holding no tunnels is correct when there is nothing to reach.
+    assert cli.daemon_watchdog() == 0
+    assert restarts == []
+
+
+def test_watchdog_honours_its_cooldown(watchdog_world):
+    _, restarts = watchdog_world
+    assert cli.daemon_watchdog() == 0
+    assert cli.daemon_watchdog() == 0
+    # A restart takes time to help; a tighter loop would just churn.
+    assert restarts == [True]
+
+
+def test_watchdog_ignores_an_expired_stamp(watchdog_world, monkeypatch):
+    _, restarts = watchdog_world
+    cli.daemon_watchdog()
+    later = cli.time.time() + cli.WATCHDOG_COOLDOWN + 1
+    monkeypatch.setattr(cli.time, "time", lambda: later)
+    cli.daemon_watchdog()
+    assert restarts == [True, True]
+
+
+def test_install_adds_both_daemons(as_root, tmp_path, monkeypatch):
+    import plistlib
+
+    commands = []
+    monkeypatch.setattr(cli, "LAUNCHD_PLIST", tmp_path / "com.sesame.tunneld.plist")
+    monkeypatch.setattr(cli, "WATCHDOG_PLIST", tmp_path / "com.sesame.watchdog.plist")
+    monkeypatch.setattr(cli, "pymobiledevice3_path", lambda: "/fake/pymobiledevice3")
+    executable = tmp_path / "bin" / "sesame"
+    executable.parent.mkdir()
+    executable.touch()
+    monkeypatch.setattr(cli.sys, "executable", str(tmp_path / "bin" / "python"))
+    monkeypatch.setattr(
+        cli.subprocess,
+        "run",
+        lambda command, **kwargs: commands.append(command) or subprocess.CompletedProcess(command, 0),
+    )
+
+    assert cli.daemon_install() == 0
+
+    with (tmp_path / "com.sesame.watchdog.plist").open("rb") as handle:
+        plist = plistlib.load(handle)
+    assert plist["ProgramArguments"] == [str(executable), "daemon", "watchdog"]
+    assert plist["StartInterval"] == cli.WATCHDOG_INTERVAL
+    assert ["launchctl", "bootstrap", "system", str(tmp_path / "com.sesame.watchdog.plist")] in commands
+
+
+def test_install_can_skip_the_watchdog(as_root, tmp_path, monkeypatch):
+    monkeypatch.setattr(cli, "LAUNCHD_PLIST", tmp_path / "com.sesame.tunneld.plist")
+    monkeypatch.setattr(cli, "WATCHDOG_PLIST", tmp_path / "com.sesame.watchdog.plist")
+    monkeypatch.setattr(cli, "pymobiledevice3_path", lambda: "/fake/pymobiledevice3")
+    monkeypatch.setattr(cli.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess([], 0))
+
+    assert cli.daemon_install(watchdog=False) == 0
+    assert not (tmp_path / "com.sesame.watchdog.plist").exists()
+
+
+def test_uninstall_removes_both(as_root, tmp_path, monkeypatch):
+    tunneld = tmp_path / "com.sesame.tunneld.plist"
+    watchdog = tmp_path / "com.sesame.watchdog.plist"
+    tunneld.write_text("x")
+    watchdog.write_text("x")
+    monkeypatch.setattr(cli, "LAUNCHD_PLIST", tunneld)
+    monkeypatch.setattr(cli, "WATCHDOG_PLIST", watchdog)
+    monkeypatch.setattr(cli.subprocess, "run", lambda *a, **k: None)
+
+    assert cli.daemon_uninstall() == 0
+    assert not tunneld.exists()
+    assert not watchdog.exists()

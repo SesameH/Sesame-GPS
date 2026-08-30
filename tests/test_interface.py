@@ -22,14 +22,11 @@ def strings():
     start = script.index("const STRINGS")
     end = script.index("let lang =")
     program = (
-        script[start:end]
-        + "\nconst flat = (o, p='') => Object.entries(o).flatMap(([k, v]) =>"
+        script[start:end] + "\nconst flat = (o, p='') => Object.entries(o).flatMap(([k, v]) =>"
         "  (v && typeof v === 'object' && !Array.isArray(v)) ? flat(v, p + k + '.') : [p + k]);"
         "\nconsole.log(JSON.stringify({en: flat(STRINGS.en), zh: flat(STRINGS.zh)}));"
     )
-    result = subprocess.run(
-        ["node", "-e", program], capture_output=True, text=True, check=True
-    )
+    result = subprocess.run(["node", "-e", program], capture_output=True, text=True, check=True)
     return json.loads(result.stdout)
 
 

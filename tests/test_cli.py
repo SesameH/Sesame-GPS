@@ -77,6 +77,8 @@ def test_daemon_install_writes_a_loadable_plist(monkeypatch, tmp_path):
     commands = []
     monkeypatch.setattr(cli.os, "geteuid", lambda: 0)
     monkeypatch.setattr(cli, "LAUNCHD_PLIST", plist_path)
+    # Without this the watchdog half would write to the real /Library.
+    monkeypatch.setattr(cli, "WATCHDOG_PLIST", tmp_path / f"{cli.WATCHDOG_LABEL}.plist")
     monkeypatch.setattr(cli, "pymobiledevice3_path", lambda: "/fake/pymobiledevice3")
     monkeypatch.setattr(
         cli.subprocess,
