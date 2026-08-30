@@ -121,3 +121,19 @@ async def settle(condition, timeout=2.0, interval=0.01):
             return True
         await asyncio.sleep(interval)
     return False
+
+
+@pytest.fixture(autouse=True)
+def never_touch_real_launch_daemons(tmp_path_factory, monkeypatch):
+    """Keep every test away from /Library/LaunchDaemons.
+
+    Tests write and unlink these paths. Pointed at the real ones they fail on
+    a permission error at best, and delete a working installation at worst if
+    the suite is ever run as root.
+    """
+    from sesame import __main__ as cli
+
+    sandbox = tmp_path_factory.mktemp("launchdaemons")
+    monkeypatch.setattr(cli, "LAUNCHD_PLIST", sandbox / f"{cli.LAUNCHD_LABEL}.plist")
+    monkeypatch.setattr(cli, "WATCHDOG_PLIST", sandbox / f"{cli.WATCHDOG_LABEL}.plist")
+    monkeypatch.setattr(cli, "WATCHDOG_STAMP", sandbox / "watchdog.stamp")
