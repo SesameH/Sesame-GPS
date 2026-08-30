@@ -474,3 +474,42 @@ def test_uninstall_removes_both(as_root, tmp_path, monkeypatch):
     assert cli.daemon_uninstall() == 0
     assert not tunneld.exists()
     assert not watchdog.exists()
+
+
+def test_tunneld_probe_tolerates_a_slow_answer(monkeypatch):
+    calls = []
+
+    class Answer:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+    def slow_then_fine(url, timeout):
+        calls.append(timeout)
+        if len(calls) == 1:
+            raise TimeoutError("timed out")
+        return Answer()
+
+    monkeypatch.setattr(cli.urllib.request, "urlopen", slow_then_fine)
+    monkeypatch.setattr(cli.time, "sleep", lambda _: None)
+
+    # The daemon has been measured answering in anywhere from 2.5 to 10 s; one
+    # slow answer must not be read as "not running".
+    assert cli.tunneld_is_up() is True
+    assert calls[0] >= 10
+
+
+def test_tunneld_probe_gives_up_eventually(monkeypatch):
+    attempts = []
+
+    def refuse(url, timeout):
+        attempts.append(url)
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(cli.urllib.request, "urlopen", refuse)
+    monkeypatch.setattr(cli.time, "sleep", lambda _: None)
+
+    assert cli.tunneld_is_up(attempts=2) is False
+    assert len(attempts) == 2

@@ -44,6 +44,10 @@ WATCHDOG_COOLDOWN = 300
 WATCHDOG_STAMP = Path("/var/tmp/sesame-watchdog.stamp")
 
 TUNNELD_STARTUP_TIMEOUT = 30.0
+# The daemon enumerates its tunnels to answer, which on a busy machine has been
+# measured at anywhere from 2.5 to over 10 seconds. Anything tighter reports a
+# perfectly healthy daemon as dead.
+TUNNELD_PROBE_TIMEOUT = 12.0
 
 
 def pymobiledevice3_path() -> str | None:
@@ -54,13 +58,22 @@ def pymobiledevice3_path() -> str | None:
     return shutil.which("pymobiledevice3")
 
 
-def tunneld_is_up(timeout: float = 1.5) -> bool:
+def tunneld_is_up(timeout: float = TUNNELD_PROBE_TIMEOUT, attempts: int = 2) -> bool:
+    """Whether the tunnel daemon answers.
+
+    Retried, because a single slow answer being read as "not running" makes
+    everything downstream wrong: serve starts a second daemon and asks for a
+    password, and the watchdog decides a stuck daemon is a dead one.
+    """
     host, port = TUNNELD_DEFAULT_ADDRESS
-    try:
-        with urllib.request.urlopen(f"http://{host}:{port}/", timeout=timeout):
-            return True
-    except (urllib.error.URLError, OSError):
-        return False
+    for attempt in range(attempts):
+        try:
+            with urllib.request.urlopen(f"http://{host}:{port}/", timeout=timeout):
+                return True
+        except (urllib.error.URLError, OSError):
+            if attempt + 1 < attempts:
+                time.sleep(0.5)
+    return False
 
 
 def applescript_string(value: str) -> str:
