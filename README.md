@@ -85,22 +85,24 @@ and remembers the choice.
 Install the tunnel daemon so it starts at boot:
 
 ```bash
-sudo sesame daemon install     # install
+sudo $(which sesame) daemon install     # install
 sesame daemon status           # check
-sudo sesame daemon uninstall   # remove
+sudo $(which sesame) daemon uninstall   # remove
 ```
 
 After this, `sesame` never touches `sudo`.
 
+`sudo` resets `PATH` and will not find `sesame` on its own, hence `$(which sesame)`.
+
 This also installs a watchdog. The tunnel daemon can end up holding no tunnels while your device
-is plainly on the network, which otherwise needs `sudo sesame daemon restart` every time; the
+is plainly on the network, which otherwise needs `sudo $(which sesame) daemon restart` every time; the
 watchdog checks every two minutes and restarts it for you. `--no-watchdog` skips it, and it logs
 to `/var/log/sesame-watchdog.log`.
 
 To run the daemon yourself instead, pass `--no-tunneld`:
 
 ```bash
-sudo sesame daemon start     # foreground, Ctrl-C to stop
+sudo $(which sesame) daemon start     # foreground, Ctrl-C to stop
 sesame --no-tunneld --open   # in another terminal
 ```
 
@@ -242,7 +244,7 @@ Privacy & Security → Developer Mode. Then run `sesame doctor`.
 needs a few seconds; the interface retries for about thirty. If it persists, restart the daemon:
 
 ```bash
-sudo sesame daemon restart
+sudo $(which sesame) daemon restart
 ```
 
 If you hit that more than once, install the daemon (above) — the watchdog it brings does this
